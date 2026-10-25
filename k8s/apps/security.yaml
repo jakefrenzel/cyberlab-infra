@@ -1,0 +1,21 @@
+# Cluster-wide security policy in k8s/security (Cilium host firewall). The policies
+# only take effect on nodes labelled cyberlab.io/host-firewall=enabled.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: security
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/jakefrenzel/cyberlab-infra.git
+    targetRevision: main
+    path: k8s/security
+  destination:
+    server: https://kubernetes.default.svc
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
