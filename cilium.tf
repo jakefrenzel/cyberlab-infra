@@ -41,7 +41,20 @@ data "helm_template" "cilium" {
     }
 
     # One operator is plenty for a three-node lab
-    operator = { replicas = 1 }
+    operator = {
+      replicas   = 1
+      prometheus = { enabled = true }
+      dashboards = { enabled = true }
+    }
+
+    # Metrics endpoints only. The ServiceMonitors that tell Prometheus to scrape them live
+    # in k8s/monitoring, because their CRD comes from kube-prometheus-stack (installed by
+    # Argo CD) and doesn't exist yet when Talos applies this manifest at bootstrap.
+    prometheus = { enabled = true }
+
+    # Grafana dashboards as ConfigMaps (label grafana_dashboard=1), picked up by the
+    # Grafana sidecar from any namespace
+    dashboards = { enabled = true }
 
     hubble = {
       relay = { enabled = true }
@@ -49,6 +62,21 @@ data "helm_template" "cilium" {
       # Generate Hubble's TLS certs inside the cluster. The default ("helm") makes new
       # random certs on every render, which would change the machine config on every plan.
       tls = { auto = { method = "cronJob" } }
+
+      # Turn observed flows into metrics, labelled by source/destination workload
+      metrics = {
+        enableOpenMetrics = true
+        enabled = [
+          "dns",
+          "drop",
+          "tcp",
+          "flow",
+          "port-distribution",
+          "icmp",
+          "httpV2:exemplars=true;labelsContext=source_ip,source_namespace,source_workload,destination_ip,destination_namespace,destination_workload,traffic_direction",
+        ]
+        dashboards = { enabled = true }
+      }
     }
   })]
 }
