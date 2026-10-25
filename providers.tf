@@ -10,8 +10,15 @@ terraform {
       source  = "siderolabs/talos"
       version = "~> 0.12"
     }
+    helm = {
+      source  = "hashicorp/helm"
+      version = "~> 3.3"
+    }
   }
 }
+
+# Only used to render charts locally (helm_template); it never connects to the cluster
+provider "helm" {}
 
 provider "proxmox" {
   endpoint  = var.proxmox_endpoint

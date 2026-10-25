@@ -31,12 +31,15 @@ data "talos_machine_configuration" "node" {
   machine_type     = each.value.role
   machine_secrets  = talos_machine_secrets.this.machine_secrets
   talos_version    = var.talos_version
-  config_patches = [
-    local.install_patch,
-    # Replace the generated `auto: stable` hostname; auto and hostname can't coexist
-    yamlencode({ apiVersion = "v1alpha1", kind = "HostnameConfig", "$patch" = "delete" }),
-    yamlencode({ apiVersion = "v1alpha1", kind = "HostnameConfig", hostname = each.key }),
-  ]
+  config_patches = concat(
+    [
+      local.install_patch,
+      # Replace the generated `auto: stable` hostname; auto and hostname can't coexist
+      yamlencode({ apiVersion = "v1alpha1", kind = "HostnameConfig", "$patch" = "delete" }),
+      yamlencode({ apiVersion = "v1alpha1", kind = "HostnameConfig", hostname = each.key }),
+    ],
+    each.value.role == "controlplane" ? local.cni_patches : [],
+  )
 }
 
 moved {
