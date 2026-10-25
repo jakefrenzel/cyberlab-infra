@@ -26,6 +26,10 @@ data "helm_template" "cilium" {
     k8sServiceHost       = "localhost"
     k8sServicePort       = 7445
 
+    # Enforce CiliumClusterwideNetworkPolicies on the nodes themselves (k8s/security).
+    # Nodes no host policy selects stay unfiltered.
+    hostFirewall = { enabled = true }
+
     # Talos forbids loading kernel modules, so SYS_MODULE is dropped from the defaults
     securityContext = {
       capabilities = {
