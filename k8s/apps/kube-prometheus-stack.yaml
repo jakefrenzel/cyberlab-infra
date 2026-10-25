@@ -1,0 +1,66 @@
+# Prometheus, Grafana, Alertmanager, node-exporter, and kube-state-metrics.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kube-prometheus-stack
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://prometheus-community.github.io/helm-charts
+    chart: kube-prometheus-stack
+    targetRevision: 92.13.1
+    helm:
+      valuesObject:
+        # Talos binds these to localhost on the control plane, and this cluster has no
+        # kube-proxy (Cilium replaces it). Re-enable the first three after exposing
+        # their metrics endpoints with a Talos patch.
+        kubeControllerManager:
+          enabled: false
+        kubeScheduler:
+          enabled: false
+        kubeEtcd:
+          enabled: false
+        kubeProxy:
+          enabled: false
+
+        grafana:
+          # The chart's default admin password is the well-known "prom-operator", and a
+          # chart-generated random one would change on every Argo CD render. Read it from
+          # a Secret created once by hand instead (never committed).
+          admin:
+            existingSecret: grafana-admin
+            userKey: admin-user
+            passwordKey: admin-password
+          # Load dashboards shipped as ConfigMaps from any namespace (e.g. Cilium's)
+          sidecar:
+            dashboards:
+              searchNamespace: ALL
+
+        prometheus:
+          prometheusSpec:
+            # No persistent storage in the cluster yet; history resets if the pod restarts
+            retention: 7d
+            # Pick up ServiceMonitors/PodMonitors/rules from every namespace, not only
+            # ones labelled for this Helm release
+            serviceMonitorSelectorNilUsesHelmValues: false
+            podMonitorSelectorNilUsesHelmValues: false
+            ruleSelectorNilUsesHelmValues: false
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: monitoring
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      # The chart's CRDs are too large for client-side apply's last-applied annotation
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
