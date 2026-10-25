@@ -37,6 +37,9 @@ data "talos_machine_configuration" "node" {
       # Replace the generated `auto: stable` hostname; auto and hostname can't coexist
       yamlencode({ apiVersion = "v1alpha1", kind = "HostnameConfig", "$patch" = "delete" }),
       yamlencode({ apiVersion = "v1alpha1", kind = "HostnameConfig", hostname = each.key }),
+      # Opts the node into the Cilium host firewall policies in k8s/security. Merges
+      # with the control plane's own role labels.
+      yamlencode({ apiVersion = "v1alpha1", kind = "KubeNodeConfig", labels = { "cyberlab.io/host-firewall" = "enabled" } }),
     ],
     each.value.role == "controlplane" ? concat(local.cni_patches, local.argocd_patches, local.cp_metrics_patches) : local.worker_patches,
   )
