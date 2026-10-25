@@ -1,10 +1,11 @@
 locals {
   # Cluster topology. host = last octet in cluster_cidr; vm_id = 40 (Lab VLAN) + host octet.
+  # data_disk = GB for the persistent-volume disk (0 = none; workloads only run on workers).
   # Adding a worker is one line here.
   nodes = {
-    talos-cp-01 = { role = "controlplane", host = 11, vm_id = 4011, cores = 2, memory = 4096 }
-    talos-wk-01 = { role = "worker", host = 21, vm_id = 4021, cores = 2, memory = 6144 }
-    talos-wk-02 = { role = "worker", host = 22, vm_id = 4022, cores = 2, memory = 6144 }
+    talos-cp-01 = { role = "controlplane", host = 11, vm_id = 4011, cores = 2, memory = 4096, data_disk = 0 }
+    talos-wk-01 = { role = "worker", host = 21, vm_id = 4021, cores = 2, memory = 6144, data_disk = 20 }
+    talos-wk-02 = { role = "worker", host = 22, vm_id = 4022, cores = 2, memory = 6144, data_disk = 20 }
   }
 
   gateway   = cidrhost(var.cluster_cidr, 1)
@@ -58,6 +59,20 @@ resource "proxmox_virtual_environment_vm" "node" {
     iothread     = true
     discard      = "on"
     ssd          = true
+  }
+
+  # Persistent-volume disk, formatted and mounted by Talos as a user volume (storage.tf)
+  dynamic "disk" {
+    for_each = each.value.data_disk > 0 ? [each.value.data_disk] : []
+    content {
+      datastore_id = "local-lvm"
+      interface    = "scsi1"
+      file_format  = "raw"
+      size         = disk.value
+      iothread     = true
+      discard      = "on"
+      ssd          = true
+    }
   }
 
   # Private NAT bridge: no inbound from the upstream network

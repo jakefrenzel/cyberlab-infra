@@ -34,15 +34,40 @@ spec:
             existingSecret: grafana-admin
             userKey: admin-user
             passwordKey: admin-password
+          # Keep Grafana's database (users, UI-made dashboards) across restarts
+          persistence:
+            enabled: true
+            storageClassName: local-path
+            size: 2Gi
           # Load dashboards shipped as ConfigMaps from any namespace (e.g. Cilium's)
           sidecar:
             dashboards:
               searchNamespace: ALL
 
+        alertmanager:
+          alertmanagerSpec:
+            storage:
+              volumeClaimTemplate:
+                spec:
+                  storageClassName: local-path
+                  accessModes: [ReadWriteOnce]
+                  resources:
+                    requests:
+                      storage: 1Gi
+
         prometheus:
           prometheusSpec:
-            # No persistent storage in the cluster yet; history resets if the pod restarts
-            retention: 7d
+            # 15 days of history, capped below the 10Gi volume so it can never fill up
+            retention: 15d
+            retentionSize: 8GiB
+            storageSpec:
+              volumeClaimTemplate:
+                spec:
+                  storageClassName: local-path
+                  accessModes: [ReadWriteOnce]
+                  resources:
+                    requests:
+                      storage: 10Gi
             # Pick up ServiceMonitors/PodMonitors/rules from every namespace, not only
             # ones labelled for this Helm release
             serviceMonitorSelectorNilUsesHelmValues: false

@@ -1,0 +1,24 @@
+# Default StorageClass backed by each worker's data disk. Wave -2 so it exists before
+# anything that claims a volume.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: local-path-provisioner
+  namespace: argocd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/jakefrenzel/cyberlab-infra.git
+    targetRevision: main
+    path: k8s/storage/local-path
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: local-path-storage
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
