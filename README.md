@@ -19,6 +19,16 @@ Terraform for my homelab's Kubernetes cluster: three [Talos Linux](https://www.t
 - **Network:** every node sits on a private NAT bridge (`vmbr1`) with a static IP from cloud-init. Nothing on the upstream network can reach the nodes; the admin laptop reaches them through a Tailscale subnet route
 - **Talos:** cluster secrets, per-node machine config, bootstrap, and kubeconfig are all Terraform resources (`siderolabs/talos` provider)
 
+On top of the nodes:
+
+| Layer | Component | Installed by |
+|-------|-----------|--------------|
+| CNI | [Cilium](https://cilium.io) 1.20 with kube-proxy replacement, NetworkPolicy enforcement, and Hubble flow visibility | Terraform → Talos inline manifest |
+| GitOps | [Argo CD](https://argo-cd.readthedocs.io) 3.5 with an app-of-apps `root` Application watching [`k8s/apps`](k8s/apps) | Terraform → Talos inline manifest |
+| Monitoring | kube-prometheus-stack (Prometheus, Grafana, Alertmanager), plus Cilium and Hubble metrics and dashboards | Argo CD, from this repo |
+
+Terraform owns the cluster and the two components it can't run without (CNI and the GitOps controller). Everything else is a file in `k8s/` that Argo CD deploys from `main`.
+
 ## Layout
 
 | Path | Contents |
@@ -28,10 +38,14 @@ Terraform for my homelab's Kubernetes cluster: three [Talos Linux](https://www.t
 | `image.tf` | Image Factory schematic and image download |
 | `nodes.tf` | Cluster topology (one map) and the VMs |
 | `talos.tf` | Machine secrets, machine configs, bootstrap, client configs |
+| `cilium.tf` | Cilium chart rendered with `helm_template`, plus the Talos patches that remove flannel and kube-proxy |
+| `argocd.tf` | Argo CD chart and the `root` Application |
 | `main.tf` | Read-only smoke test of the Proxmox API |
 | `host/pve1/setup-vmbr1.sh` | Host network setup the Proxmox API can't do (NAT bridge + Tailscale route) |
+| `k8s/apps/` | One Argo CD `Application` per file; this is what `root` syncs |
+| `k8s/monitoring/` | Namespace and Prometheus scrape configs for the monitoring stack |
 
-Adding a worker is one line in the `nodes` map in `nodes.tf`.
+Adding a worker is one line in the `nodes` map in `nodes.tf`. Adding an app is one file in `k8s/apps/` and a push to `main`.
 
 ## Usage
 
@@ -58,6 +72,25 @@ Requirements: Terraform ≥ 1.16, `talosctl`, `kubectl`, a Proxmox VE 9 node, an
    kubectl get nodes
    ```
    On Windows PowerShell 5.1, write the files with `| Set-Content -Encoding ascii` instead of `>`, which produces UTF-16.
+5. Create the Grafana admin Secret once the `monitoring` namespace exists (see [`k8s/monitoring/README.md`](k8s/monitoring/README.md)). Argo CD's own admin password is generated in-cluster:
+   ```bash
+   kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d
+   kubectl -n argocd port-forward svc/argocd-server 8080:443
+   ```
+
+### Changing Cilium or Argo CD
+
+Talos treats inline manifests as **create-only**: once an object exists, Talos never updates or deletes it, even if the manifest in the machine config changes. After editing `cilium.tf` or `argocd.tf`:
+
+```bash
+terraform apply
+talosctl -n 10.127.40.11 upgrade-k8s --to <current Kubernetes version> --dry-run   # review the diff
+talosctl -n 10.127.40.11 upgrade-k8s --to <current Kubernetes version>             # sync manifests
+```
+
+Passing the version the cluster already runs skips the Kubernetes upgrade and only syncs manifests (server-side apply; removed objects are pruned).
+
+Changes under `k8s/` need none of this: push to `main` and Argo CD syncs them.
 
 ## CI
 
@@ -73,4 +106,6 @@ CI is static only. GitHub's runners can't reach the lab, and no Proxmox token or
 
 - **Terraform state contains the cluster's root CA** and every node's credentials. It is gitignored and must be backed up separately; never commit it
 - `terraform.tfvars`, `talosconfig`, and `kubeconfig` are gitignored for the same reason
+- Admin passwords for Argo CD and Grafana live only in in-cluster Secrets, never in git or Terraform state. Grafana's chart default (`prom-operator`) is never used
+- Pod Security Admission enforces the `baseline` level cluster-wide. The `monitoring` namespace is the one exception (`privileged`), because node-exporter needs host access
 - The Proxmox provider uses `insecure = true` because the node has a self-signed certificate. The API is only reachable over Tailscale, which encrypts the traffic
