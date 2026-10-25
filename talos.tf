@@ -38,7 +38,7 @@ data "talos_machine_configuration" "node" {
       yamlencode({ apiVersion = "v1alpha1", kind = "HostnameConfig", "$patch" = "delete" }),
       yamlencode({ apiVersion = "v1alpha1", kind = "HostnameConfig", hostname = each.key }),
     ],
-    each.value.role == "controlplane" ? concat(local.cni_patches, local.argocd_patches) : local.worker_patches,
+    each.value.role == "controlplane" ? concat(local.cni_patches, local.argocd_patches, local.cp_metrics_patches) : local.worker_patches,
   )
 }
 

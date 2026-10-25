@@ -14,15 +14,20 @@ spec:
     targetRevision: 92.13.1
     helm:
       valuesObject:
-        # Talos binds these to localhost on the control plane, and this cluster has no
-        # kube-proxy (Cilium replaces it). Re-enable the first three after exposing
-        # their metrics endpoints with a Talos patch.
-        kubeControllerManager:
-          enabled: false
-        kubeScheduler:
-          enabled: false
+        # Control-plane metrics listen on all interfaces via a Talos patch (metrics.tf).
+        # Scheduler and controller-manager pods carry the kubeadm-style `component`
+        # labels, so the chart defaults (HTTPS + bearer token) work as-is.
+        # etcd is a Talos host service, not a pod: select the kube-apiserver pod instead.
+        # It runs with hostNetwork on every control-plane node, so its endpoints are the
+        # node IPs, and Prometheus scrapes etcd's :2381 there. No IPs in this repo.
         kubeEtcd:
-          enabled: false
+          service:
+            selector:
+              component: kube-apiserver
+          serviceMonitor:
+            # Plain-HTTP metrics endpoint: don't send the Prometheus token in the clear
+            authorization: null
+        # No kube-proxy: Cilium replaces it
         kubeProxy:
           enabled: false
 
