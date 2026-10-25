@@ -1,0 +1,120 @@
+# Falco runtime security: watches every node's syscalls with the modern eBPF driver and
+# alerts on suspicious behaviour (shells in containers, reads of sensitive files, ...).
+# Falcosidekick fans the events out to Alertmanager and a web UI.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: falco
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://falcosecurity.github.io/charts
+    chart: falco
+    targetRevision: 9.2.1
+    helm:
+      valuesObject:
+        # Talos enforces signed kernel modules, so the kmod driver can't load. The
+        # modern eBPF probe is built into Falco (CO-RE against the kernel's BTF), needs
+        # no driver-loader init container, and runs with a handful of capabilities
+        # (BPF, PERFMON, SYS_RESOURCE, SYS_PTRACE) instead of a privileged container.
+        driver:
+          kind: modern_ebpf
+          modernEbpf:
+            leastPrivileged: true
+
+        # The chart's default requests 512Mi per node, a big slice of the 4G control
+        # plane. Falco sits well below that on this cluster; the limit stays at 1Gi.
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 1000m
+            memory: 1024Mi
+
+        collectors:
+          containerEngine:
+            # Only the CRI socket exists on Talos. The chart mounts each socket's
+            # directory as a hostPath without a type, so leaving the other engines on
+            # would make the kubelet create empty /run/podman, /run/crio, ... on every node.
+            engines:
+              docker:
+                enabled: false
+              podman:
+                enabled: false
+              containerd:
+                enabled: false
+              cri:
+                enabled: true
+                sockets: ["/run/containerd/containerd.sock"]
+              lxc:
+                enabled: false
+              libvirt_lxc:
+                enabled: false
+              bpm:
+                enabled: false
+
+        # Prometheus endpoint on :8765, scraped via the ServiceMonitor, plus the
+        # chart's Grafana dashboard (picked up by the sidecar from any namespace)
+        metrics:
+          enabled: true
+        serviceMonitor:
+          create: true
+        grafana:
+          dashboards:
+            enabled: true
+
+        falco:
+          json_output: true
+
+        falcosidekick:
+          enabled: true
+          replicaCount: 1
+          serviceMonitor:
+            enabled: true
+          grafana:
+            dashboards:
+              enabled: true
+          config:
+            # Alertmanager 0.27+ only serves the v2 API
+            alertmanager:
+              hostport: http://kube-prometheus-stack-alertmanager.monitoring.svc:9093
+              endpoint: /api/v2/alerts
+              minimumpriority: warning
+          webui:
+            enabled: true
+            replicaCount: 1
+            # The chart default login is admin:admin. Leave it empty and read the
+            # login from a Secret created once by hand instead (never committed).
+            user: ""
+            existingSecret: falcosidekick-ui-auth
+            # Keep a week of events so Redis can't grow without bound
+            ttl: 7d
+            redis:
+              storageClass: local-path
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: falco
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    # Falco needs hostPath mounts (/proc, /sys/kernel, the CRI socket) and the BPF and
+    # PERFMON capabilities, which the cluster-wide "baseline" Pod Security level
+    # rejects. Scoped to this namespace only.
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: privileged
+        pod-security.kubernetes.io/warn: privileged
+        pod-security.kubernetes.io/audit: privileged
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
