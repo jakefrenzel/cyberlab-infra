@@ -26,6 +26,7 @@ On top of the nodes:
 | CNI | [Cilium](https://cilium.io) 1.20 with kube-proxy replacement, NetworkPolicy enforcement, and Hubble flow visibility | Terraform → Talos inline manifest |
 | GitOps | [Argo CD](https://argo-cd.readthedocs.io) 3.5 with an app-of-apps `root` Application watching [`k8s/apps`](k8s/apps) | Terraform → Talos inline manifest |
 | Monitoring | kube-prometheus-stack (Prometheus, Grafana, Alertmanager), plus Cilium, Hubble, and control-plane (etcd, scheduler, controller-manager) metrics and dashboards | Argo CD, from this repo |
+| Host firewall | Cilium host policies: every node drops ingress that isn't explicitly allowed; control-plane metrics are reachable by Prometheus only | Feature by Terraform; policies by Argo CD |
 | Storage | [Local Path Provisioner](https://github.com/rancher/local-path-provisioner) as the default StorageClass, backed by each worker's data disk (a Talos user volume) | Talos volume from Terraform; provisioner by Argo CD |
 
 Terraform owns the cluster and the two components it can't run without (CNI and the GitOps controller). Everything else is a file in `k8s/` that Argo CD deploys from `main`.
@@ -48,6 +49,7 @@ Terraform owns the cluster and the two components it can't run without (CNI and 
 | `k8s/apps/` | One Argo CD `Application` per file; this is what `root` syncs |
 | `k8s/monitoring/` | Namespace and Prometheus scrape configs for the monitoring stack |
 | `k8s/storage/local-path/` | Local Path Provisioner, pointed at the Talos user volume |
+| `k8s/security/` | Cilium host firewall policies |
 
 Adding a worker is one line in the `nodes` map in `nodes.tf`. Adding an app is one file in `k8s/apps/` and a push to `main`.
 
@@ -104,6 +106,30 @@ Machine-config changes such as `metrics.tf` apply with a plain `terraform apply`
 talosctl -n 10.127.40.11 reboot --wait
 ```
 
+### Host firewall
+
+Every node carries the label `cyberlab.io/host-firewall=enabled` (set in `talos.tf`), which opts it into the policies in [`k8s/security/host-firewall.yaml`](k8s/security/host-firewall.yaml). Ingress to a node is dropped unless one of these allows it:
+
+| From | Allowed |
+|------|---------|
+| Other nodes, API server, Cilium health | Everything (VXLAN, kubelet, Talos API proxying, health checks) |
+| Outside the cluster (the admin laptop, via the Tailscale route) | Kubernetes API `6443`, Talos API `50000`, ping |
+| Any pod | API server `6443`, Talos host DNS `53` |
+| Prometheus only | kubelet, node-exporter, Cilium/Hubble metrics; on the control plane also etcd `2381`, controller-manager `10257`, scheduler `10259` |
+| Hubble Relay only | Hubble `4244` |
+
+Policies are identity-based, so "Prometheus only" means the Prometheus pod wherever it runs, and the files contain no IP addresses. Outgoing traffic from the nodes isn't filtered.
+
+To change the rules safely, put the node's host endpoint into audit mode first (allowed-but-would-drop flows are logged, nothing is dropped), then watch the verdicts:
+
+```bash
+kubectl -n kube-system exec <cilium-pod-on-node> -c cilium-agent -- cilium-dbg endpoint list   # host endpoint = identity 1
+kubectl -n kube-system exec <cilium-pod-on-node> -c cilium-agent -- cilium-dbg endpoint config <id> PolicyAuditMode=Enabled
+kubectl -n kube-system exec <cilium-pod-on-node> -c cilium-agent -- cilium-dbg monitor -t policy-verdict --related-to <id>
+```
+
+Audit mode is also the emergency off switch if a rule blocks something it shouldn't: it takes effect immediately, and nothing else reverts it. Removing the label or deleting the policy by hand doesn't stick, because Talos restores the label within seconds and Argo CD recreates the policy. Fix the rule in git, or drop the label from `talos.tf` and apply. Audit mode doesn't survive a Cilium agent restart; the node goes back to enforcing.
+
 ## CI
 
 Every push and pull request runs [`ci.yml`](.github/workflows/ci.yml):
@@ -120,5 +146,6 @@ CI is static only. GitHub's runners can't reach the lab, and no Proxmox token or
 - `terraform.tfvars`, `talosconfig`, and `kubeconfig` are gitignored for the same reason
 - Admin passwords for Argo CD and Grafana live only in in-cluster Secrets, never in git or Terraform state. Grafana's chart default (`prom-operator`) is never used
 - Pod Security Admission enforces the `baseline` level cluster-wide. The `monitoring` namespace is the one exception (`privileged`), because node-exporter needs host access
-- Control-plane metrics listen on the node's network: scheduler (`:10259`) and controller-manager (`:10257`) still require an authorized token, but etcd's `:2381` is unauthenticated (metrics only, no etcd data). They're reachable from pods and over the Tailscale route; restricting them to Prometheus with Cilium host firewall policies is planned
+- Control-plane metrics listen on the node's network: scheduler (`:10259`) and controller-manager (`:10257`) require an authorized token, and etcd's `:2381` is unauthenticated (metrics only, no etcd data). The host firewall limits all three to the Prometheus pod
+- Every node runs a default-deny ingress host firewall; only the Kubernetes and Talos APIs are reachable from outside the cluster
 - The Proxmox provider uses `insecure = true` because the node has a self-signed certificate. The API is only reachable over Tailscale, which encrypts the traffic
