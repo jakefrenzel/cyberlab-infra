@@ -63,9 +63,14 @@ spec:
           enabled: true
         serviceMonitor:
           create: true
+        # Both charts name their dashboard file falco-dashboard.json, so in the same
+        # sidecar directory they overwrite each other. A folder each keeps them apart.
         grafana:
           dashboards:
             enabled: true
+            configMaps:
+              falco:
+                folder: falco
 
         falco:
           json_output: true
@@ -78,6 +83,9 @@ spec:
           grafana:
             dashboards:
               enabled: true
+              configMaps:
+                falcosidekick:
+                  folder: falcosidekick
           config:
             # Alertmanager 0.27+ only serves the v2 API
             alertmanager:
