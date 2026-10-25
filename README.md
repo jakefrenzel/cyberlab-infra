@@ -27,6 +27,7 @@ On top of the nodes:
 | GitOps | [Argo CD](https://argo-cd.readthedocs.io) 3.5 with an app-of-apps `root` Application watching [`k8s/apps`](k8s/apps) | Terraform → Talos inline manifest |
 | Monitoring | kube-prometheus-stack (Prometheus, Grafana, Alertmanager), plus Cilium, Hubble, and control-plane (etcd, scheduler, controller-manager) metrics and dashboards | Argo CD, from this repo |
 | Host firewall | Cilium host policies: every node drops ingress that isn't explicitly allowed; control-plane metrics are reachable by Prometheus only | Feature by Terraform; policies by Argo CD |
+| Runtime security | [Falco](https://falco.org) 0.45 watching every node's syscalls with the modern eBPF driver; Falcosidekick forwards events to Alertmanager and a web UI, with metrics and dashboards in Prometheus/Grafana | Argo CD, from this repo |
 | Storage | [Local Path Provisioner](https://github.com/rancher/local-path-provisioner) as the default StorageClass, backed by each worker's data disk (a Talos user volume) | Talos volume from Terraform; provisioner by Argo CD |
 
 Terraform owns the cluster and the two components it can't run without (CNI and the GitOps controller). Everything else is a file in `k8s/` that Argo CD deploys from `main`.
@@ -78,7 +79,7 @@ Requirements: Terraform ≥ 1.16, `talosctl`, `kubectl`, a Proxmox VE 9 node, an
    kubectl get nodes
    ```
    On Windows PowerShell 5.1, write the files with `| Set-Content -Encoding ascii` instead of `>`, which produces UTF-16.
-5. Create the Grafana admin Secret once the `monitoring` namespace exists (see [`k8s/monitoring/README.md`](k8s/monitoring/README.md)). Argo CD's own admin password is generated in-cluster:
+5. Create the Grafana admin Secret once the `monitoring` namespace exists (see [`k8s/monitoring/README.md`](k8s/monitoring/README.md)), and the Falcosidekick UI login once the `falco` namespace exists (see [Falco](#falco)). Argo CD's own admin password is generated in-cluster:
    ```bash
    kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d
    kubectl -n argocd port-forward svc/argocd-server 8080:443
@@ -130,6 +131,36 @@ kubectl -n kube-system exec <cilium-pod-on-node> -c cilium-agent -- cilium-dbg m
 
 Audit mode is also the emergency off switch if a rule blocks something it shouldn't: it takes effect immediately, and nothing else reverts it. Removing the label or deleting the policy by hand doesn't stick, because Talos restores the label within seconds and Argo CD recreates the policy. Fix the rule in git, or drop the label from `talos.tf` and apply. Audit mode doesn't survive a Cilium agent restart; the node goes back to enforcing.
 
+### Falco
+
+Falco runs on every node, control plane included ([`k8s/apps/falco.yaml`](k8s/apps/falco.yaml)), and alerts on suspicious behaviour inside containers and on the host: shells spawned in containers, reads of sensitive files, writes below system directories, and the rest of the upstream default ruleset. Talos only loads signed kernel modules, so Falco uses its modern eBPF probe, built against the kernel's BTF. That needs no driver download and runs with four capabilities (`BPF`, `PERFMON`, `SYS_RESOURCE`, `SYS_PTRACE`) instead of a privileged container. Events carry the pod and namespace, read from containerd's CRI socket.
+
+Events go to stdout as JSON and to Falcosidekick, which forwards `warning` and above to Alertmanager and everything to its web UI (kept for 7 days). Falco and Falcosidekick metrics are scraped by Prometheus, with a dashboard each in Grafana.
+
+The UI reads its login from a `falcosidekick-ui-auth` Secret that is created by hand and never committed (the chart default is `admin:admin`). After a rebuild, create it once the `falco` namespace exists; until then the UI pod waits in `CreateContainerConfigError`:
+
+```powershell
+$b = New-Object byte[] 24; [Security.Cryptography.RandomNumberGenerator]::Create().GetBytes($b)
+$pw = [Convert]::ToBase64String($b).TrimEnd('=').Replace('+','-').Replace('/','_')
+kubectl -n falco create secret generic falcosidekick-ui-auth --from-literal=FALCOSIDEKICK_UI_USER="admin:$pw"
+Remove-Variable pw, b
+```
+
+Read the login back and open the UI at <http://localhost:2802>:
+
+```powershell
+kubectl -n falco get secret falcosidekick-ui-auth -o jsonpath='{.data.FALCOSIDEKICK_UI_USER}' | % { [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($_)) }
+kubectl -n falco port-forward svc/falco-falcosidekick-ui 2802:2802
+```
+
+To see a detection end to end, read a sensitive file from a throwaway pod. A `Read sensitive file untrusted` event shows up in the UI and in Alertmanager within seconds:
+
+```bash
+kubectl run falco-test --image=busybox:1.37.0 --restart=Never --command -- sleep 600
+kubectl exec -t falco-test -- cat /etc/shadow > /dev/null
+kubectl delete pod falco-test
+```
+
 ## CI
 
 Every push and pull request runs [`ci.yml`](.github/workflows/ci.yml):
@@ -144,8 +175,8 @@ CI is static only. GitHub's runners can't reach the lab, and no Proxmox token or
 
 - **Terraform state contains the cluster's root CA** and every node's credentials. It is gitignored and must be backed up separately; never commit it
 - `terraform.tfvars`, `talosconfig`, and `kubeconfig` are gitignored for the same reason
-- Admin passwords for Argo CD and Grafana live only in in-cluster Secrets, never in git or Terraform state. Grafana's chart default (`prom-operator`) is never used
-- Pod Security Admission enforces the `baseline` level cluster-wide. The `monitoring` namespace is the one exception (`privileged`), because node-exporter needs host access
+- Admin passwords for Argo CD, Grafana, and the Falcosidekick UI live only in in-cluster Secrets, never in git or Terraform state. The chart defaults (`prom-operator`, `admin:admin`) are never used
+- Pod Security Admission enforces the `baseline` level cluster-wide. The exceptions (`privileged`) are `monitoring`, because node-exporter needs host access, and `falco`, because Falco needs host mounts and eBPF capabilities
 - Control-plane metrics listen on the node's network: scheduler (`:10259`) and controller-manager (`:10257`) require an authorized token, and etcd's `:2381` is unauthenticated (metrics only, no etcd data). The host firewall limits all three to the Prometheus pod
 - Every node runs a default-deny ingress host firewall; only the Kubernetes and Talos APIs are reachable from outside the cluster
 - The Proxmox provider uses `insecure = true` because the node has a self-signed certificate. The API is only reachable over Tailscale, which encrypts the traffic
