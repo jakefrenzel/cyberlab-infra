@@ -12,8 +12,8 @@ Terraform for my homelab's Kubernetes cluster: three [Talos Linux](https://www.t
 | Node | Role | vCPU | RAM | Disk | IP |
 |------|------|------|-----|------|----|
 | talos-cp-01 | Control plane | 2 | 4 GB | 40 GB | `.11` |
-| talos-wk-01 | Worker | 2 | 6 GB | 40 GB | `.21` |
-| talos-wk-02 | Worker | 2 | 6 GB | 40 GB | `.22` |
+| talos-wk-01 | Worker | 2 | 6 GB | 40 GB + 20 GB data | `.21` |
+| talos-wk-02 | Worker | 2 | 6 GB | 40 GB + 20 GB data | `.22` |
 
 - **Image:** Talos `nocloud` image from [Image Factory](https://factory.talos.dev) with the QEMU guest agent extension, downloaded straight onto the Proxmox node
 - **Network:** every node sits on a private NAT bridge (`vmbr1`) with a static IP from cloud-init. Nothing on the upstream network can reach the nodes; the admin laptop reaches them through a Tailscale subnet route
@@ -25,7 +25,8 @@ On top of the nodes:
 |-------|-----------|--------------|
 | CNI | [Cilium](https://cilium.io) 1.20 with kube-proxy replacement, NetworkPolicy enforcement, and Hubble flow visibility | Terraform → Talos inline manifest |
 | GitOps | [Argo CD](https://argo-cd.readthedocs.io) 3.5 with an app-of-apps `root` Application watching [`k8s/apps`](k8s/apps) | Terraform → Talos inline manifest |
-| Monitoring | kube-prometheus-stack (Prometheus, Grafana, Alertmanager), plus Cilium and Hubble metrics and dashboards | Argo CD, from this repo |
+| Monitoring | kube-prometheus-stack (Prometheus, Grafana, Alertmanager), plus Cilium, Hubble, and control-plane (etcd, scheduler, controller-manager) metrics and dashboards | Argo CD, from this repo |
+| Storage | [Local Path Provisioner](https://github.com/rancher/local-path-provisioner) as the default StorageClass, backed by each worker's data disk (a Talos user volume) | Talos volume from Terraform; provisioner by Argo CD |
 
 Terraform owns the cluster and the two components it can't run without (CNI and the GitOps controller). Everything else is a file in `k8s/` that Argo CD deploys from `main`.
 
@@ -40,10 +41,13 @@ Terraform owns the cluster and the two components it can't run without (CNI and 
 | `talos.tf` | Machine secrets, machine configs, bootstrap, client configs |
 | `cilium.tf` | Cilium chart rendered with `helm_template`, plus the Talos patches that remove flannel and kube-proxy |
 | `argocd.tf` | Argo CD chart and the `root` Application |
+| `storage.tf` | Talos user volume on each worker's data disk, mounted for Local Path Provisioner |
+| `metrics.tf` | Control-plane-only Talos patch that exposes etcd, scheduler, and controller-manager metrics |
 | `main.tf` | Read-only smoke test of the Proxmox API |
 | `host/pve1/setup-vmbr1.sh` | Host network setup the Proxmox API can't do (NAT bridge + Tailscale route) |
 | `k8s/apps/` | One Argo CD `Application` per file; this is what `root` syncs |
 | `k8s/monitoring/` | Namespace and Prometheus scrape configs for the monitoring stack |
+| `k8s/storage/local-path/` | Local Path Provisioner, pointed at the Talos user volume |
 
 Adding a worker is one line in the `nodes` map in `nodes.tf`. Adding an app is one file in `k8s/apps/` and a push to `main`.
 
@@ -92,6 +96,14 @@ Passing the version the cluster already runs skips the Kubernetes upgrade and on
 
 Changes under `k8s/` need none of this: push to `main` and Argo CD syncs them.
 
+### Changing control-plane settings
+
+Machine-config changes such as `metrics.tf` apply with a plain `terraform apply`. The scheduler and controller-manager restart on their own within a minute. etcd only reads its flags at startup, and Talos won't restart it through the API, so etcd changes need a control-plane reboot (about two minutes without the Kubernetes API; workloads on the workers keep running):
+
+```bash
+talosctl -n 10.127.40.11 reboot --wait
+```
+
 ## CI
 
 Every push and pull request runs [`ci.yml`](.github/workflows/ci.yml):
@@ -108,4 +120,5 @@ CI is static only. GitHub's runners can't reach the lab, and no Proxmox token or
 - `terraform.tfvars`, `talosconfig`, and `kubeconfig` are gitignored for the same reason
 - Admin passwords for Argo CD and Grafana live only in in-cluster Secrets, never in git or Terraform state. Grafana's chart default (`prom-operator`) is never used
 - Pod Security Admission enforces the `baseline` level cluster-wide. The `monitoring` namespace is the one exception (`privileged`), because node-exporter needs host access
+- Control-plane metrics listen on the node's network: scheduler (`:10259`) and controller-manager (`:10257`) still require an authorized token, but etcd's `:2381` is unauthenticated (metrics only, no etcd data). They're reachable from pods and over the Tailscale route; restricting them to Prometheus with Cilium host firewall policies is planned
 - The Proxmox provider uses `insecure = true` because the node has a self-signed certificate. The API is only reachable over Tailscale, which encrypts the traffic
