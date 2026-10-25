@@ -1,0 +1,18 @@
+# Terraform state can contain secrets: never commit it
+*.tfstate
+*.tfstate.*
+.terraform/
+crash.log
+crash.*.log
+*.tfplan
+
+# Real variable values (API token etc.). The .example file IS committed.
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+
+# Talos / Kubernetes credentials generated later
+talosconfig
+kubeconfig
+*.kubeconfig
+_out/

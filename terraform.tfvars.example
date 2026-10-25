@@ -1,0 +1,4 @@
+# Copy to terraform.tfvars (gitignored) and fill in the real values.
+proxmox_endpoint  = "https://<pve1-tailscale-ip>:8006/"
+proxmox_api_token = "terraform@pve!tf=00000000-0000-0000-0000-000000000000"
+cluster_cidr      = "10.127.40.0/24"

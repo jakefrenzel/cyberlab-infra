@@ -1,0 +1,14 @@
+# Default gitleaks rules plus ones for secrets specific to this repo.
+[extend]
+useDefault = true
+
+# The built-in rules don't know Proxmox API tokens: user@realm!tokenid=<uuid>
+[[rules]]
+id = "proxmox-api-token"
+description = "Proxmox VE API token secret"
+regex = '''[A-Za-z0-9._-]+@(?:pve|pam)![A-Za-z0-9._-]+=[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'''
+keywords = ["@pve!", "@pam!"]
+
+  # The all-zero placeholder in terraform.tfvars.example
+  [[rules.allowlists]]
+  regexes = ['''=0{8}-0{4}-0{4}-0{4}-0{12}''']
