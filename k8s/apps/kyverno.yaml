@@ -1,0 +1,55 @@
+# Kyverno admission controller, here to verify image signatures: pods only start if
+# their images were signed by the expected CI workflow. The policies themselves are in
+# k8s/security (the security Application).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: kyverno
+  namespace: argocd
+  annotations:
+    # Before the security app, which holds Kyverno's policies (their CRDs come from here)
+    argocd.argoproj.io/sync-wave: "-1"
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://kyverno.github.io/kyverno
+    chart: kyverno
+    # 3.9.2 = Kyverno v1.19.2, which fixed 24 security advisories (several in image
+    # verification itself), so it's taken despite being newer than usual here
+    targetRevision: 3.9.2
+    helm:
+      valuesObject:
+        # Metrics for every controller, scraped by Prometheus, plus Kyverno's dashboard
+        admissionController:
+          serviceMonitor:
+            enabled: true
+        backgroundController:
+          serviceMonitor:
+            enabled: true
+        cleanupController:
+          serviceMonitor:
+            enabled: true
+        reportsController:
+          serviceMonitor:
+            enabled: true
+        grafana:
+          enabled: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: kyverno
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      # Kyverno's CRDs are too large for client-side apply's last-applied annotation
+      - ServerSideApply=true
+    retry:
+      limit: 5
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

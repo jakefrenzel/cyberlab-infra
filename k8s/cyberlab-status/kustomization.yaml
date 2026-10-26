@@ -7,8 +7,8 @@ resources:
   - networkpolicy.yaml
   - monitoring.yaml
 # Deploying a release = changing these two lines. The digest is what actually runs,
-# so a re-pushed tag can't change it; the tag is for humans. Both come from the
-# release workflow's summary in github.com/jakefrenzel/cyberlab-status.
+# so a re-pushed tag can't change it; the tag is for humans. The release workflow in
+# github.com/jakefrenzel/cyberlab-status opens a PR that changes them; merging it deploys.
 images:
   - name: ghcr.io/jakefrenzel/cyberlab-status
     newTag: "0.2.0"
