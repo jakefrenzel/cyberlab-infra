@@ -11,5 +11,5 @@ resources:
 # release workflow's summary in github.com/jakefrenzel/cyberlab-status.
 images:
   - name: ghcr.io/jakefrenzel/cyberlab-status
-    newTag: "0.1.0"
-    digest: sha256:dadd11ccab8327d13366402d4431535fcec079a35c39d68b142c6b6df5ab2a4b
+    newTag: "0.2.0"
+    digest: sha256:dd33e6b1491012889af2e42d93a2b085f4173ab3c7c4489935b7092f1ea3e922
