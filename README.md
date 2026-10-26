@@ -25,7 +25,7 @@ On top of the nodes:
 |-------|-----------|--------------|
 | CNI | [Cilium](https://cilium.io) 1.20 with kube-proxy replacement, NetworkPolicy enforcement, and Hubble flow visibility | Terraform → Talos inline manifest |
 | GitOps | [Argo CD](https://argo-cd.readthedocs.io) 3.5 with an app-of-apps `root` Application watching [`k8s/apps`](k8s/apps) | Terraform → Talos inline manifest |
-| Monitoring | kube-prometheus-stack (Prometheus, Grafana, Alertmanager), plus Cilium, Hubble, and control-plane (etcd, scheduler, controller-manager) metrics and dashboards | Argo CD, from this repo |
+| Monitoring | kube-prometheus-stack (Prometheus, Grafana, Alertmanager), plus Cilium, Hubble, and control-plane (etcd, scheduler, controller-manager) metrics and dashboards; a custom Cyberlab Overview home dashboard; warning and critical alerts to Discord | Argo CD, from this repo |
 | Host firewall | Cilium host policies: every node drops ingress that isn't explicitly allowed; control-plane metrics are reachable by Prometheus only | Feature by Terraform; policies by Argo CD |
 | Runtime security | [Falco](https://falco.org) 0.45 watching every node's syscalls with the modern eBPF driver; Falcosidekick forwards events to Alertmanager and a web UI, with metrics and dashboards in Prometheus/Grafana | Argo CD, from this repo |
 | Storage | [Local Path Provisioner](https://github.com/rancher/local-path-provisioner) as the default StorageClass, backed by each worker's data disk (a Talos user volume) | Talos volume from Terraform; provisioner by Argo CD |
@@ -48,7 +48,7 @@ Terraform owns the cluster and the two components it can't run without (CNI and 
 | `main.tf` | Read-only smoke test of the Proxmox API |
 | `host/pve1/setup-vmbr1.sh` | Host network setup the Proxmox API can't do (NAT bridge + Tailscale route) |
 | `k8s/apps/` | One Argo CD `Application` per file; this is what `root` syncs |
-| `k8s/monitoring/` | Namespace and Prometheus scrape configs for the monitoring stack |
+| `k8s/monitoring/` | Namespace, Prometheus scrape configs, and the lab's Grafana dashboards (as JSON) |
 | `k8s/storage/local-path/` | Local Path Provisioner, pointed at the Talos user volume |
 | `k8s/security/` | Cilium host firewall policies |
 
@@ -79,7 +79,7 @@ Requirements: Terraform ≥ 1.16, `talosctl`, `kubectl`, a Proxmox VE 9 node, an
    kubectl get nodes
    ```
    On Windows PowerShell 5.1, write the files with `| Set-Content -Encoding ascii` instead of `>`, which produces UTF-16.
-5. Create the Grafana admin Secret once the `monitoring` namespace exists (see [`k8s/monitoring/README.md`](k8s/monitoring/README.md)), and the Falcosidekick UI login once the `falco` namespace exists (see [Falco](#falco)). Argo CD's own admin password is generated in-cluster:
+5. Create the Grafana admin and Discord webhook Secrets once the `monitoring` namespace exists (see [`k8s/monitoring/README.md`](k8s/monitoring/README.md)), and the Falcosidekick UI login once the `falco` namespace exists (see [Falco](#falco)). Argo CD's own admin password is generated in-cluster:
    ```bash
    kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d
    kubectl -n argocd port-forward svc/argocd-server 8080:443
@@ -135,7 +135,7 @@ Audit mode is also the emergency off switch if a rule blocks something it should
 
 Falco runs on every node, control plane included ([`k8s/apps/falco.yaml`](k8s/apps/falco.yaml)), and alerts on suspicious behaviour inside containers and on the host: shells spawned in containers, reads of sensitive files, writes below system directories, and the rest of the upstream default ruleset. Talos only loads signed kernel modules, so Falco uses its modern eBPF probe, built against the kernel's BTF. That needs no driver download and runs with four capabilities (`BPF`, `PERFMON`, `SYS_RESOURCE`, `SYS_PTRACE`) instead of a privileged container. Events carry the pod and namespace, read from containerd's CRI socket.
 
-Events go to stdout as JSON and to Falcosidekick, which forwards `warning` and above to Alertmanager and everything to its web UI (kept for 7 days). Falco and Falcosidekick metrics are scraped by Prometheus, with a dashboard each in Grafana.
+Events go to stdout as JSON and to Falcosidekick, which forwards `warning` and above to Alertmanager and everything to its web UI (kept for 7 days). Alertmanager doesn't pass Falco events on to Discord yet; that waits until the rules are tuned against a baseline. Falco and Falcosidekick metrics are scraped by Prometheus, with a dashboard each in Grafana.
 
 The UI reads its login from a `falcosidekick-ui-auth` Secret that is created by hand and never committed (the chart default is `admin:admin`). After a rebuild, create it once the `falco` namespace exists; until then the UI pod waits in `CreateContainerConfigError`:
 
@@ -175,7 +175,7 @@ CI is static only. GitHub's runners can't reach the lab, and no Proxmox token or
 
 - **Terraform state contains the cluster's root CA** and every node's credentials. It is gitignored and must be backed up separately; never commit it
 - `terraform.tfvars`, `talosconfig`, and `kubeconfig` are gitignored for the same reason
-- Admin passwords for Argo CD, Grafana, and the Falcosidekick UI live only in in-cluster Secrets, never in git or Terraform state. The chart defaults (`prom-operator`, `admin:admin`) are never used
+- Admin passwords for Argo CD, Grafana, and the Falcosidekick UI, and the Discord webhook URL, live only in in-cluster Secrets, never in git or Terraform state. The chart defaults (`prom-operator`, `admin:admin`) are never used
 - Pod Security Admission enforces the `baseline` level cluster-wide. The exceptions (`privileged`) are `monitoring`, because node-exporter needs host access, and `falco`, because Falco needs host mounts and eBPF capabilities
 - Control-plane metrics listen on the node's network: scheduler (`:10259`) and controller-manager (`:10257`) require an authorized token, and etcd's `:2381` is unauthenticated (metrics only, no etcd data). The host firewall limits all three to the Prometheus pod
 - Every node runs a default-deny ingress host firewall; only the Kubernetes and Talos APIs are reachable from outside the cluster

@@ -1,0 +1,19 @@
+# Everything the monitoring-config Application syncs into the monitoring namespace.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - cilium-monitors.yaml
+# Dashboards live as plain JSON in dashboards/ (importable into any Grafana) and ship
+# as ConfigMaps. Grafana's sidecar loads every ConfigMap labelled grafana_dashboard=1.
+configMapGenerator:
+  - name: cyberlab-overview-dashboard
+    namespace: monitoring
+    files:
+      - dashboards/cyberlab-overview.json
+    options:
+      labels:
+        grafana_dashboard: "1"
+      # A fixed name, so Grafana's home-dashboard path in kube-prometheus-stack.yaml
+      # and the sidecar's file stay stable across edits
+      disableNameSuffixHash: true
