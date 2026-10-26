@@ -29,6 +29,7 @@ On top of the nodes:
 | Host firewall | Cilium host policies: every node drops ingress that isn't explicitly allowed; control-plane metrics are reachable by Prometheus only | Feature by Terraform; policies by Argo CD |
 | Runtime security | [Falco](https://falco.org) 0.45 watching every node's syscalls with the modern eBPF driver; Falcosidekick forwards events to Alertmanager and a web UI, with metrics and dashboards in Prometheus/Grafana | Argo CD, from this repo |
 | App | [cyberlab-status](https://github.com/jakefrenzel/cyberlab-status), the lab's own Go status page: a signed image from GHCR, pinned by digest, under Pod Security "restricted" and a default-deny NetworkPolicy | Argo CD, from this repo |
+| Supply chain | [Kyverno](https://kyverno.io) 1.19: pods in `cyberlab-status` only start if their images are signed by its release workflow and carry a signed SBOM | Argo CD, from this repo |
 | Storage | [Local Path Provisioner](https://github.com/rancher/local-path-provisioner) as the default StorageClass, backed by each worker's data disk (a Talos user volume) | Talos volume from Terraform; provisioner by Argo CD |
 
 Terraform owns the cluster and the two components it can't run without (CNI and the GitOps controller). Everything else is a file in `k8s/` that Argo CD deploys from `main`.
@@ -51,7 +52,7 @@ Terraform owns the cluster and the two components it can't run without (CNI and 
 | `k8s/apps/` | One Argo CD `Application` per file; this is what `root` syncs |
 | `k8s/monitoring/` | Namespace, Prometheus scrape configs, the lab's alert rules, and its Grafana dashboards (as JSON) |
 | `k8s/storage/local-path/` | Local Path Provisioner, pointed at the Talos user volume |
-| `k8s/security/` | Cilium host firewall policies |
+| `k8s/security/` | Cilium host firewall policies and Kyverno's image signature policy |
 | `k8s/cyberlab-status/` | The status page: Deployment, NetworkPolicy, monitoring, and the image digest to run |
 
 Adding a worker is one line in the `nodes` map in `nodes.tf`. Adding an app is one file in `k8s/apps/` and a push to `main`.
@@ -174,6 +175,23 @@ kubectl -n cyberlab-status port-forward svc/cyberlab-status 8080:80   # then htt
 ```
 
 Its namespace enforces Pod Security `restricted` (stricter than the cluster's `baseline`), its pod has no Kubernetes API token, and its NetworkPolicy denies everything except DNS, queries to Prometheus, and Prometheus's scrape.
+
+### Image signatures (Kyverno)
+
+[Kyverno](https://kyverno.io) checks every pod created in `cyberlab-status` ([`k8s/security/image-signatures.yaml`](k8s/security/image-signatures.yaml)). Each image must be:
+
+- **Signed by the cyberlab-status release workflow**, run from a version tag: a cosign keyless signature whose certificate names `jakefrenzel/cyberlab-status/.github/workflows/release.yml@refs/tags/v…`, checked against Sigstore's transparency log
+- **Carrying its signed SPDX SBOM** attestation from the same workflow
+- **Run by digest**: a tag is rewritten to the digest that was verified
+
+That covers init and ephemeral containers too, so `kubectl debug` with an arbitrary image is rejected. Before enforcing, the policy ran in audit mode: the app passed by digest and by tag, and it caught `busybox`, an unsigned init container, and an image validly signed by someone else (Sigstore's own `cosign` image, rejected for the wrong signer identity). The same cases are now denied at admission:
+
+```
+admission webhook "ivpol.validate.kyverno.svc-fail-finegrained-cyberlab-status-signed-images" denied the request:
+Policy cyberlab-status-signed-images failed: Images in cyberlab-status must be signed by the cyberlab-status release workflow
+```
+
+Only this namespace's pods go to Kyverno, and they fail closed: if Kyverno is down, the status page can't start new pods, but nothing else in the cluster is affected. Checks run at admission only (no background scan), since every pod in the namespace passes admission anyway.
 
 ## CI
 
