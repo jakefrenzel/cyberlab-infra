@@ -7,7 +7,10 @@ kind: ImageValidatingPolicy
 metadata:
   name: cyberlab-status-signed-images
 spec:
-  validationActions: [Audit]
+  # Enforced. Audit mode first proved it: the app (by digest and by tag) passed;
+  # busybox, an unsigned init container, and an image validly signed by someone
+  # else (Sigstore's own cosign image) were all caught.
+  validationActions: [Deny]
   # Only this namespace's pods go through Kyverno, so a Kyverno outage can't block
   # the rest of the cluster. Within it, fail closed: no verdict means no pod.
   failurePolicy: Fail
