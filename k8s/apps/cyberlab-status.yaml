@@ -1,0 +1,38 @@
+# The lab's own app: a status page built and signed in github.com/jakefrenzel/cyberlab-status.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cyberlab-status
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/jakefrenzel/cyberlab-infra.git
+    targetRevision: main
+    path: k8s/cyberlab-status
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cyberlab-status
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    # Stricter than the cluster-wide "baseline": the app is written to pass
+    # "restricted", so the namespace enforces it
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: restricted
+        pod-security.kubernetes.io/warn: restricted
+        pod-security.kubernetes.io/audit: restricted
+    # On a fresh cluster the ServiceMonitor CRD arrives with kube-prometheus-stack;
+    # retry until it exists
+    retry:
+      limit: 10
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m

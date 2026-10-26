@@ -1,0 +1,15 @@
+# The status page, synced by the cyberlab-status Application.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: cyberlab-status
+resources:
+  - deployment.yaml
+  - networkpolicy.yaml
+  - monitoring.yaml
+# Deploying a release = changing these two lines. The digest is what actually runs,
+# so a re-pushed tag can't change it; the tag is for humans. Both come from the
+# release workflow's summary in github.com/jakefrenzel/cyberlab-status.
+images:
+  - name: ghcr.io/jakefrenzel/cyberlab-status
+    newTag: "0.1.0"
+    digest: sha256:dadd11ccab8327d13366402d4431535fcec079a35c39d68b142c6b6df5ab2a4b

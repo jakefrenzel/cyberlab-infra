@@ -28,6 +28,7 @@ On top of the nodes:
 | Monitoring | kube-prometheus-stack (Prometheus, Grafana, Alertmanager), plus Cilium, Hubble, and control-plane (etcd, scheduler, controller-manager) metrics and dashboards; Argo CD metrics; a custom Cyberlab Overview home dashboard; extra alert rules for Argo CD and Cilium; warning and critical alerts to Discord | Argo CD, from this repo |
 | Host firewall | Cilium host policies: every node drops ingress that isn't explicitly allowed; control-plane metrics are reachable by Prometheus only | Feature by Terraform; policies by Argo CD |
 | Runtime security | [Falco](https://falco.org) 0.45 watching every node's syscalls with the modern eBPF driver; Falcosidekick forwards events to Alertmanager and a web UI, with metrics and dashboards in Prometheus/Grafana | Argo CD, from this repo |
+| App | [cyberlab-status](https://github.com/jakefrenzel/cyberlab-status), the lab's own Go status page: a signed image from GHCR, pinned by digest, under Pod Security "restricted" and a default-deny NetworkPolicy | Argo CD, from this repo |
 | Storage | [Local Path Provisioner](https://github.com/rancher/local-path-provisioner) as the default StorageClass, backed by each worker's data disk (a Talos user volume) | Talos volume from Terraform; provisioner by Argo CD |
 
 Terraform owns the cluster and the two components it can't run without (CNI and the GitOps controller). Everything else is a file in `k8s/` that Argo CD deploys from `main`.
@@ -51,6 +52,7 @@ Terraform owns the cluster and the two components it can't run without (CNI and 
 | `k8s/monitoring/` | Namespace, Prometheus scrape configs, the lab's alert rules, and its Grafana dashboards (as JSON) |
 | `k8s/storage/local-path/` | Local Path Provisioner, pointed at the Talos user volume |
 | `k8s/security/` | Cilium host firewall policies |
+| `k8s/cyberlab-status/` | The status page: Deployment, NetworkPolicy, monitoring, and the image digest to run |
 
 Adding a worker is one line in the `nodes` map in `nodes.tf`. Adding an app is one file in `k8s/apps/` and a push to `main`.
 
@@ -162,6 +164,16 @@ kubectl run falco-test --image=busybox:1.37.0 --restart=Never --command -- sleep
 kubectl exec -t falco-test -- cat /etc/shadow > /dev/null
 kubectl delete pod falco-test
 ```
+
+### Status page
+
+[cyberlab-status](https://github.com/jakefrenzel/cyberlab-status) is built, scanned, and signed in its own repository. Deploying a release means changing the tag and digest in [`k8s/cyberlab-status/kustomization.yaml`](k8s/cyberlab-status/kustomization.yaml); the digest is what runs, so a re-pushed tag can't change it. To open it:
+
+```bash
+kubectl -n cyberlab-status port-forward svc/cyberlab-status 8080:80   # then http://localhost:8080
+```
+
+Its namespace enforces Pod Security `restricted` (stricter than the cluster's `baseline`), its pod has no Kubernetes API token, and its NetworkPolicy denies everything except DNS, queries to Prometheus, and Prometheus's scrape.
 
 ## CI
 

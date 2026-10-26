@@ -1,0 +1,31 @@
+# Scrape the app's own /metrics, and alert if it's been blind for a while. If the app
+# itself is down, the chart's TargetDown alert already covers it.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: cyberlab-status
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cyberlab-status
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cyberlab-status
+spec:
+  groups:
+    - name: cyberlab-status
+      rules:
+        - alert: CyberlabStatusQueriesFailing
+          expr: sum(rate(cyberlab_status_query_errors_total[10m])) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "The status page's queries to Prometheus keep failing"
+            description: "Checks on the status page show '?'. Likely a NetworkPolicy, DNS, or Prometheus problem; the app's logs name the failing check."
