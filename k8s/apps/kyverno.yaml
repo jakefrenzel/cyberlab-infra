@@ -9,6 +9,10 @@ metadata:
   annotations:
     # Before the security app, which holds Kyverno's policies (their CRDs come from here)
     argocd.argoproj.io/sync-wave: "-1"
+    # Compare against the API server's view (a server-side apply dry run). The default
+    # client-side diff misreads fields the API server normalizes in the large
+    # policies.kyverno.io CRDs and reports them OutOfSync forever.
+    argocd.argoproj.io/compare-options: ServerSideDiff=true
   finalizers:
     - resources-finalizer.argocd.argoproj.io
 spec:
