@@ -1,6 +1,6 @@
 # k8s/monitoring
 
-Plain manifests for the monitoring stack, synced by the `monitoring-config` Application through [`kustomization.yaml`](kustomization.yaml): the namespace, Cilium scrape configs, and the lab's own Grafana dashboards. The chart itself is the `kube-prometheus-stack` Application in [`../apps`](../apps).
+Plain manifests for the monitoring stack, synced by the `monitoring-config` Application through [`kustomization.yaml`](kustomization.yaml): the namespace, Cilium and Argo CD scrape configs, the lab's own alert rules, and its Grafana dashboards. The chart itself is the `kube-prometheus-stack` Application in [`../apps`](../apps).
 
 ## Dashboards
 
@@ -44,6 +44,33 @@ Alertmanager's routes are in [`../apps/kube-prometheus-stack.yaml`](../apps/kube
 | `Watchdog` | Always firing by design: proves the pipeline works |
 | `InfoInhibitor`, `severity=info` | Informational, for dashboards |
 | `source=falco` | Falco events, until the rules are tuned against a baseline |
+
+### Lab alert rules
+
+kube-prometheus-stack ships about 150 rules for nodes, Kubernetes, etcd, and itself. [`cyberlab-alerts.yaml`](cyberlab-alerts.yaml) adds rules for what it doesn't cover. A component that stops answering is already caught by the chart's `TargetDown`.
+
+| Alert | Fires when |
+|-------|------------|
+| `ArgoCDAppOutOfSync` | An app hasn't matched `main` for 15 minutes (auto-sync is failing) |
+| `ArgoCDAppUnhealthy` | An app's resources have been unhealthy for 15 minutes |
+| `ArgoCDSyncFailed` | A sync ended in `Error` or `Failed` |
+| `CiliumNodesUnreachable` (critical) | A node can't reach other nodes for 5 minutes |
+| `CiliumHealthEndpointsUnreachable` | Pod-network health checks fail for 5 minutes |
+| `CiliumPolicyImportFailed` | A NetworkPolicy or host firewall policy failed to apply |
+| `CiliumEndpointRegenerationFailing` | Cilium keeps failing to program pods' networking |
+| `CiliumControllersFailing` | A Cilium agent's background reconcilers keep erroring |
+| `CiliumBPFMapPressure` | A BPF map is over 90% full |
+| `CiliumPolicyDropsHigh` | Over 100 policy-denied packets on a node in 10 minutes (the baseline is under 10): something is probing the node, or a rule blocks real traffic |
+| `HubbleLostEvents` | Hubble has been dropping flow events for 15 minutes |
+
+Check rule changes before pushing (the Prometheus image has `promtool` but no shell, so the rules go in on stdin):
+
+```powershell
+$l = Get-Content k8s/monitoring/cyberlab-alerts.yaml; $i = [array]::IndexOf($l, 'spec:')
+($l[($i+1)..($l.Count-1)] | % { if ($_.Length -ge 2) { $_.Substring(2) } else { $_ } }) -join "`n" | kubectl -n monitoring exec -i prometheus-kube-prometheus-stack-prometheus-0 -c prometheus -- promtool check rules /dev/stdin
+```
+
+### Test alert
 
 To send a test alert to Discord: it arrives about 30 seconds later and resolves on its own after 5 minutes. amtool prints warnings about its new matcher parser; they're harmless, and the alert still goes through.
 

@@ -1,0 +1,107 @@
+# Alert rules for the parts of the lab kube-prometheus-stack has no rules for: Argo CD
+# and Cilium. Agents or controllers that stop answering are already covered by the
+# chart's TargetDown alert. Warning and critical alerts go to Discord.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cyberlab-alerts
+  namespace: monitoring
+spec:
+  groups:
+    - name: argocd
+      rules:
+        # Auto-sync fixes drift within minutes, so 15 minutes out of sync means syncing
+        # itself is failing (bad manifest, missing CRD, unreachable repo)
+        - alert: ArgoCDAppOutOfSync
+          expr: argocd_app_info{sync_status!="Synced"} == 1
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Argo CD app {{ $labels.name }} has been {{ $labels.sync_status }} for 15 minutes"
+            description: "The cluster doesn't match main for {{ $labels.name }}. Check its sync status: kubectl -n argocd get app {{ $labels.name }}"
+        - alert: ArgoCDAppUnhealthy
+          expr: argocd_app_info{health_status!="Healthy"} == 1
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Argo CD app {{ $labels.name }} has been {{ $labels.health_status }} for 15 minutes"
+            description: "Something {{ $labels.name }} deployed isn't healthy (pods not ready, a volume not bound, ...). Argo CD's UI shows which resource."
+        - alert: ArgoCDSyncFailed
+          expr: increase(argocd_app_sync_total{phase=~"Error|Failed"}[10m]) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "Argo CD sync of {{ $labels.name }} failed"
+            description: "A sync of {{ $labels.name }} ended in {{ $labels.phase }}. Argo CD retries, but the last change in git may be broken."
+
+    - name: cilium
+      rules:
+        # Pod traffic between nodes depends on it
+        - alert: CiliumNodesUnreachable
+          expr: max by (node) (cilium_unreachable_nodes) > 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "{{ $labels.node }} can't reach {{ $value }} other node(s)"
+            description: "Cilium's health checks between nodes are failing, so pods on different nodes may not be able to talk."
+        - alert: CiliumHealthEndpointsUnreachable
+          expr: max by (node) (cilium_unreachable_health_endpoints) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $labels.node }} can't reach {{ $value }} Cilium health endpoint(s)"
+            description: "Cilium's pod-network health checks are failing from this node."
+        # A policy that fails to apply is a hole (or a block) nobody asked for
+        - alert: CiliumPolicyImportFailed
+          expr: increase(cilium_policy_change_total{outcome="fail"}[10m]) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "Cilium failed to apply a policy change on {{ $labels.node }}"
+            description: "A NetworkPolicy or host firewall policy didn't import. Check the Cilium agent's logs on that node."
+        - alert: CiliumEndpointRegenerationFailing
+          expr: increase(cilium_endpoint_regenerations_total{outcome="fail"}[10m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Cilium keeps failing to program endpoints on {{ $labels.node }}"
+            description: "Endpoint regeneration (loading a pod's policy and datapath) is failing, so some pods' networking may be stale."
+        - alert: CiliumControllersFailing
+          expr: max by (node) (cilium_controllers_failing) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $value }} Cilium controller(s) failing on {{ $labels.node }}"
+            description: "Background reconcilers in the Cilium agent keep erroring. cilium-dbg status --all-controllers on that node shows which."
+        - alert: CiliumBPFMapPressure
+          expr: max by (node, map_name) (cilium_bpf_map_pressure) > 0.9
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Cilium BPF map {{ $labels.map_name }} is over 90% full on {{ $labels.node }}"
+            description: "When a BPF map fills up, new connections or policy entries can't be added."
+        # The busiest node's baseline is under 10 policy drops per 10 minutes. 100 is
+        # well clear of that: something is probing the nodes, or a rule blocks real traffic.
+        - alert: CiliumPolicyDropsHigh
+          expr: sum by (node) (increase(cilium_drop_count_total{reason="Policy denied"}[10m])) > 100
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $value | printf \"%.0f\" }} packets denied by policy on {{ $labels.node }} in 10 minutes"
+            description: "Far above the normal background. Either something is knocking on the node (the host firewall is doing its job), or a rule blocks traffic it shouldn't. Hubble shows which: hubble observe --verdict DROPPED"
+        - alert: HubbleLostEvents
+          expr: sum by (node) (rate(hubble_lost_events_total[5m])) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Hubble is losing flow events on {{ $labels.node }}"
+            description: "Hubble's buffers are overflowing, so flow metrics and drop visibility are incomplete."

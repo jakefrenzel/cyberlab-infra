@@ -1,0 +1,16 @@
+# Scrape target for Argo CD's metrics Services (enabled in argocd.tf). One monitor covers
+# all four: only the metrics Services have a port named http-metrics.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: argocd
+  namespace: monitoring
+spec:
+  namespaceSelector:
+    matchNames: [argocd]
+  selector:
+    matchLabels:
+      app.kubernetes.io/part-of: argocd
+  endpoints:
+    - port: http-metrics
+      interval: 30s

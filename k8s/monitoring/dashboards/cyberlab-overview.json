@@ -78,7 +78,7 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
+        "w": 3,
         "x": 0,
         "y": 1
       },
@@ -151,8 +151,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 4,
+        "w": 3,
+        "x": 3,
         "y": 1
       },
       "links": [
@@ -224,8 +224,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 8,
+        "w": 3,
+        "x": 6,
         "y": 1
       },
       "links": [
@@ -297,8 +297,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 12,
+        "w": 3,
+        "x": 9,
         "y": 1
       },
       "links": [
@@ -370,8 +370,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 16,
+        "w": 3,
+        "x": 12,
         "y": 1
       },
       "links": [
@@ -447,8 +447,8 @@
       },
       "gridPos": {
         "h": 4,
-        "w": 4,
-        "x": 20,
+        "w": 3,
+        "x": 15,
         "y": 1
       },
       "links": [
@@ -510,8 +510,144 @@
       }
     },
     {
-      "type": "timeseries",
+      "type": "stat",
       "id": 8,
+      "title": "Apps out of sync",
+      "description": "Argo CD Applications that don't match main. Auto-sync usually fixes this within a minute or two; one that stays is failing to sync.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 18,
+        "y": 1
+      },
+      "links": [],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "count(argocd_app_info{sync_status!=\"Synced\"}) or vector(0)",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "noValue": "0",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "wideLayout": true
+      }
+    },
+    {
+      "type": "stat",
+      "id": 9,
+      "title": "Apps unhealthy",
+      "description": "Argo CD Applications whose resources aren't healthy (Progressing, Degraded, Missing). Briefly Progressing during a rollout is normal.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 3,
+        "x": 21,
+        "y": 1
+      },
+      "links": [],
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "count(argocd_app_info{health_status!=\"Healthy\"}) or vector(0)",
+          "instant": true,
+          "range": false
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "noValue": "0",
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "wideLayout": true
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 10,
       "title": "Node CPU",
       "description": "Share of each node's CPU in use.",
       "datasource": {
@@ -575,7 +711,7 @@
     },
     {
       "type": "timeseries",
-      "id": 9,
+      "id": 11,
       "title": "Node memory",
       "description": "Share of each node's memory in use (excluding reclaimable cache).",
       "datasource": {
@@ -639,7 +775,7 @@
     },
     {
       "type": "timeseries",
-      "id": 10,
+      "id": 12,
       "title": "Disk used",
       "description": "System: Talos's /var partition (images, logs, etcd). Data: the workers' 20 GB volume behind the local-path StorageClass.",
       "datasource": {
@@ -713,7 +849,7 @@
     },
     {
       "type": "row",
-      "id": 11,
+      "id": 13,
       "title": "Network",
       "collapsed": false,
       "gridPos": {
@@ -726,7 +862,7 @@
     },
     {
       "type": "stat",
-      "id": 12,
+      "id": 14,
       "title": "Policy drops (1h)",
       "description": "Packets dropped by policy in the last hour: the host firewall plus NetworkPolicies. Some are expected (blocked probes); a sudden jump means a rule is blocking something real or something is knocking.",
       "datasource": {
@@ -803,7 +939,7 @@
     },
     {
       "type": "timeseries",
-      "id": 13,
+      "id": 15,
       "title": "Drops by reason",
       "description": "Every packet Cilium dropped, by reason. \"Unsupported L3 protocol\" is background noise (e.g. IPv6 on an IPv4-only cluster).",
       "datasource": {
@@ -862,7 +998,7 @@
     },
     {
       "type": "timeseries",
-      "id": 14,
+      "id": 16,
       "title": "Policy drops by node",
       "description": "Policy-denied packets per node and direction. Ingress drops on a node are mostly the host firewall.",
       "datasource": {
@@ -921,7 +1057,7 @@
     },
     {
       "type": "timeseries",
-      "id": 15,
+      "id": 17,
       "title": "Flows by verdict",
       "description": "Network flows Hubble saw, by verdict: FORWARDED, DROPPED, ...",
       "datasource": {
@@ -984,7 +1120,7 @@
     },
     {
       "type": "timeseries",
-      "id": 16,
+      "id": 18,
       "title": "DNS responses",
       "description": "CoreDNS answers by response code. A steady share of NXDOMAIN is normal: pods try each search domain before the real name. SERVFAIL is not.",
       "datasource": {
@@ -1043,7 +1179,7 @@
     },
     {
       "type": "row",
-      "id": 17,
+      "id": 19,
       "title": "Security",
       "collapsed": false,
       "gridPos": {
@@ -1056,7 +1192,7 @@
     },
     {
       "type": "stat",
-      "id": 18,
+      "id": 20,
       "title": "Falco events (24h)",
       "description": "Falco events at Warning or above in the last 24 hours, every node.",
       "datasource": {
@@ -1133,7 +1269,7 @@
     },
     {
       "type": "stat",
-      "id": 19,
+      "id": 21,
       "title": "Falco nodes not reporting",
       "description": "Nodes without a healthy Falco. Falco runs on every node, control plane included.",
       "datasource": {
@@ -1206,7 +1342,7 @@
     },
     {
       "type": "stat",
-      "id": 20,
+      "id": 22,
       "title": "Syscalls dropped (1h)",
       "description": "Syscall events Falco's eBPF probe couldn't keep up with. Dropped events are blind spots.",
       "datasource": {
@@ -1283,7 +1419,7 @@
     },
     {
       "type": "stat",
-      "id": 21,
+      "id": 23,
       "title": "Sidekick delivery errors (1h)",
       "description": "Events Falcosidekick failed to deliver to Alertmanager or its UI.",
       "datasource": {
@@ -1356,7 +1492,7 @@
     },
     {
       "type": "table",
-      "id": 22,
+      "id": 24,
       "title": "Falco events by rule (24h)",
       "description": "Every Falco rule that fired in the last 24 hours, all priorities. Open the Falcosidekick UI for the individual events.",
       "datasource": {

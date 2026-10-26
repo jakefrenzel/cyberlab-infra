@@ -26,6 +26,14 @@ data "helm_template" "argocd" {
     # No SSO or notification integrations in the lab; the built-in admin user is enough
     dex           = { enabled = false }
     notifications = { enabled = false }
+
+    # Metrics Services only, for app sync/health alerts. The ServiceMonitor lives in
+    # k8s/monitoring, because its CRD comes from kube-prometheus-stack (installed by
+    # Argo CD) and doesn't exist yet when Talos applies this manifest at bootstrap.
+    controller     = { metrics = { enabled = true } }
+    server         = { metrics = { enabled = true } }
+    repoServer     = { metrics = { enabled = true } }
+    applicationSet = { metrics = { enabled = true } }
   })]
 }
 

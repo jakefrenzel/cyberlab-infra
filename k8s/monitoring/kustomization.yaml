@@ -4,6 +4,8 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - cilium-monitors.yaml
+  - argocd-monitor.yaml
+  - cyberlab-alerts.yaml
 # Dashboards live as plain JSON in dashboards/ (importable into any Grafana) and ship
 # as ConfigMaps. Grafana's sidecar loads every ConfigMap labelled grafana_dashboard=1.
 configMapGenerator:

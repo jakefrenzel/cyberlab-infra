@@ -25,7 +25,7 @@ On top of the nodes:
 |-------|-----------|--------------|
 | CNI | [Cilium](https://cilium.io) 1.20 with kube-proxy replacement, NetworkPolicy enforcement, and Hubble flow visibility | Terraform → Talos inline manifest |
 | GitOps | [Argo CD](https://argo-cd.readthedocs.io) 3.5 with an app-of-apps `root` Application watching [`k8s/apps`](k8s/apps) | Terraform → Talos inline manifest |
-| Monitoring | kube-prometheus-stack (Prometheus, Grafana, Alertmanager), plus Cilium, Hubble, and control-plane (etcd, scheduler, controller-manager) metrics and dashboards; a custom Cyberlab Overview home dashboard; warning and critical alerts to Discord | Argo CD, from this repo |
+| Monitoring | kube-prometheus-stack (Prometheus, Grafana, Alertmanager), plus Cilium, Hubble, and control-plane (etcd, scheduler, controller-manager) metrics and dashboards; Argo CD metrics; a custom Cyberlab Overview home dashboard; extra alert rules for Argo CD and Cilium; warning and critical alerts to Discord | Argo CD, from this repo |
 | Host firewall | Cilium host policies: every node drops ingress that isn't explicitly allowed; control-plane metrics are reachable by Prometheus only | Feature by Terraform; policies by Argo CD |
 | Runtime security | [Falco](https://falco.org) 0.45 watching every node's syscalls with the modern eBPF driver; Falcosidekick forwards events to Alertmanager and a web UI, with metrics and dashboards in Prometheus/Grafana | Argo CD, from this repo |
 | Storage | [Local Path Provisioner](https://github.com/rancher/local-path-provisioner) as the default StorageClass, backed by each worker's data disk (a Talos user volume) | Talos volume from Terraform; provisioner by Argo CD |
@@ -42,13 +42,13 @@ Terraform owns the cluster and the two components it can't run without (CNI and 
 | `nodes.tf` | Cluster topology (one map) and the VMs |
 | `talos.tf` | Machine secrets, machine configs, bootstrap, client configs |
 | `cilium.tf` | Cilium chart rendered with `helm_template`, plus the Talos patches that remove flannel and kube-proxy |
-| `argocd.tf` | Argo CD chart and the `root` Application |
+| `argocd.tf` | Argo CD chart (with metrics Services) and the `root` Application |
 | `storage.tf` | Talos user volume on each worker's data disk, mounted for Local Path Provisioner |
 | `metrics.tf` | Control-plane-only Talos patch that exposes etcd, scheduler, and controller-manager metrics |
 | `main.tf` | Read-only smoke test of the Proxmox API |
 | `host/pve1/setup-vmbr1.sh` | Host network setup the Proxmox API can't do (NAT bridge + Tailscale route) |
 | `k8s/apps/` | One Argo CD `Application` per file; this is what `root` syncs |
-| `k8s/monitoring/` | Namespace, Prometheus scrape configs, and the lab's Grafana dashboards (as JSON) |
+| `k8s/monitoring/` | Namespace, Prometheus scrape configs, the lab's alert rules, and its Grafana dashboards (as JSON) |
 | `k8s/storage/local-path/` | Local Path Provisioner, pointed at the Talos user volume |
 | `k8s/security/` | Cilium host firewall policies |
 
@@ -96,6 +96,8 @@ talosctl -n 10.127.40.11 upgrade-k8s --to <current Kubernetes version>          
 ```
 
 Passing the version the cluster already runs skips the Kubernetes upgrade and only syncs manifests (server-side apply; removed objects are pruned).
+
+Objects that are new in the manifest are created by `terraform apply` on its own; `upgrade-k8s` is only needed to change or remove objects that already exist. If the dry run shows nothing but `unchanged`, there's nothing to sync.
 
 Changes under `k8s/` need none of this: push to `main` and Argo CD syncs them.
 
