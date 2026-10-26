@@ -11,5 +11,5 @@ resources:
 # github.com/jakefrenzel/cyberlab-status opens a PR that changes them; merging it deploys.
 images:
   - name: ghcr.io/jakefrenzel/cyberlab-status
-    newTag: "0.2.0"
-    digest: sha256:dd33e6b1491012889af2e42d93a2b085f4173ab3c7c4489935b7092f1ea3e922
+    newTag: "0.3.0"
+    digest: sha256:d909fbf737befb19171c9ed87a04eb942e18c177a5a60b999977823e1b041e8c
