@@ -13,6 +13,12 @@ spec:
   failurePolicy: Fail
   webhookConfiguration:
     timeoutSeconds: 15
+  # Checked at admission only. A background scan would have to list
+  # pods/ephemeralcontainers, a subresource that can't be listed, and every pod in
+  # the namespace passes admission anyway.
+  evaluation:
+    background:
+      enabled: false
   matchConstraints:
     namespaceSelector:
       matchLabels:
