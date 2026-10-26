@@ -1,0 +1,58 @@
+# Supply-chain gate for the cyberlab-status namespace: every image a pod runs there
+# must be signed by the cyberlab-status release workflow (cosign keyless, recorded in
+# Sigstore's public transparency log), and must carry its signed SBOM. Anything else
+# is rejected, whoever pushes it and whatever its tag says.
+apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
+metadata:
+  name: cyberlab-status-signed-images
+spec:
+  validationActions: [Audit]
+  # Only this namespace's pods go through Kyverno, so a Kyverno outage can't block
+  # the rest of the cluster. Within it, fail closed: no verdict means no pod.
+  failurePolicy: Fail
+  webhookConfiguration:
+    timeoutSeconds: 15
+  matchConstraints:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: cyberlab-status
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        # Ephemeral containers too, or `kubectl debug` could slip an unsigned image
+        # into a running pod
+        resources: [pods, pods/ephemeralcontainers]
+  # Every image, not only ours: busybox in this namespace is rejected as well
+  matchImageReferences:
+    - glob: "*"
+  # Defaults spelled out: tags are rewritten to the verified digest, and every
+  # matched image (init and ephemeral containers included) must pass verification
+  validationConfigurations:
+    mutateDigest: true
+    verifyDigest: true
+    required: true
+  attestors:
+    - name: release
+      cosign:
+        keyless:
+          identities:
+            # The release workflow, run from a version tag, in this repository only
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: '^https://github\.com/jakefrenzel/cyberlab-status/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$'
+        ctlog:
+          url: https://rekor.sigstore.dev
+  attestations:
+    - name: sbom
+      intoto:
+        type: https://spdx.dev/Document
+  validations:
+    - expression: >-
+        images.containers.map(image, verifyImageSignatures(image, [attestors.release])).all(e, e > 0)
+      message: >-
+        Images in cyberlab-status must be signed by the cyberlab-status release workflow
+    - expression: >-
+        images.containers.map(image, verifyAttestationSignatures(image, attestations.sbom, [attestors.release])).all(e, e > 0)
+      message: >-
+        Images in cyberlab-status must carry an SPDX SBOM attestation signed by the release workflow

@@ -1,5 +1,5 @@
-# Cluster-wide security policy in k8s/security (Cilium host firewall). The policies
-# only take effect on nodes labelled cyberlab.io/host-firewall=enabled.
+# Cluster-wide security policy in k8s/security: the Cilium host firewall (only on nodes
+# labelled cyberlab.io/host-firewall=enabled) and Kyverno's image signature checks.
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
@@ -19,3 +19,11 @@ spec:
     automated:
       prune: true
       selfHeal: true
+    # On a fresh cluster Kyverno's CRDs (image-signatures.yaml) arrive with the
+    # kyverno app; retry until they exist
+    retry:
+      limit: 10
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
