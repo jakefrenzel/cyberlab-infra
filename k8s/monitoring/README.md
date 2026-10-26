@@ -45,7 +45,7 @@ Alertmanager's routes are in [`../apps/kube-prometheus-stack.yaml`](../apps/kube
 | `InfoInhibitor`, `severity=info` | Informational, for dashboards |
 | `source=falco` | Falco events, until the rules are tuned against a baseline |
 
-To send a test alert to Discord (it resolves on its own after 5 minutes):
+To send a test alert to Discord: it arrives about 30 seconds later and resolves on its own after 5 minutes. amtool prints warnings about its new matcher parser; they're harmless, and the alert still goes through.
 
 ```powershell
 kubectl -n monitoring exec alertmanager-kube-prometheus-stack-alertmanager-0 -c alertmanager -- amtool alert add CyberlabTest severity=warning namespace=test --annotation=summary="Test alert from the cyberlab" --alertmanager.url=http://localhost:9093
