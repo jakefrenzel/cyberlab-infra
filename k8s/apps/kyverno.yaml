@@ -15,6 +15,12 @@ metadata:
     argocd.argoproj.io/compare-options: ServerSideDiff=true
   finalizers:
     - resources-finalizer.argocd.argoproj.io
+    # Argo CD adds these two itself because the chart has a pre-delete hook (it removes
+    # Kyverno's webhooks on uninstall). Listed here so root's desired state matches:
+    # without them, root's self-heal stripped them every 5 minutes and the controller
+    # put them back.
+    - pre-delete-finalizer.argocd.argoproj.io
+    - pre-delete-finalizer.argocd.argoproj.io/cleanup
 spec:
   project: default
   source:
