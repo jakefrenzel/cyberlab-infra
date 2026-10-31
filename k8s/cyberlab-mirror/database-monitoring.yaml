@@ -1,0 +1,76 @@
+# Metrics and alerts for the cyberlab-mirror database. CloudNativePG's own PodMonitor
+# switch (spec.monitoring.enablePodMonitor) is deprecated, so the PodMonitor is here.
+# Dashboard: "CloudNativePG" in Grafana (k8s/monitoring/dashboards/cloudnative-pg.json).
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: cyberlab-mirror-db
+spec:
+  selector:
+    matchLabels:
+      cnpg.io/cluster: cyberlab-mirror-db
+      cnpg.io/podRole: instance
+  podMetricsEndpoints:
+    - port: metrics
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cyberlab-mirror-db
+spec:
+  groups:
+    - name: cyberlab-mirror-db
+      rules:
+        - alert: PostgresDown
+          expr: cnpg_collector_up{namespace="cyberlab-mirror"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "cyberlab-mirror's PostgreSQL is down"
+            description: "{{ $labels.pod }}'s exporter can't reach PostgreSQL. Sign-in to cyberlab-mirror fails until it's back. Check `kubectl -n cyberlab-mirror get cluster cyberlab-mirror-db` and the pod's logs."
+        # PostgresDown can't fire when there's no pod to report it: scrape gone, pod
+        # pending, or the Cluster deleted
+        - alert: PostgresMetricsMissing
+          expr: absent(cnpg_collector_up{namespace="cyberlab-mirror"})
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "No metrics from cyberlab-mirror's PostgreSQL"
+            description: "Prometheus has no cnpg_collector_up from the cyberlab-mirror namespace for 10 minutes: the database pod isn't running or isn't being scraped."
+        - alert: PostgresConnectionsNearLimit
+          expr: |
+            sum by (pod) (cnpg_backends_total{namespace="cyberlab-mirror"})
+              / on (pod)
+            max by (pod) (cnpg_pg_settings_setting{namespace="cyberlab-mirror", name="max_connections"})
+              > 0.8
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: "cyberlab-mirror's PostgreSQL is near max_connections"
+            description: "{{ $labels.pod }} is using {{ $value | humanizePercentage }} of max_connections. Usually a connection pool that isn't releasing connections."
+        # A transaction left open blocks vacuum and holds locks; usually an app bug
+        - alert: PostgresLongTransaction
+          expr: max by (pod) (cnpg_backends_max_tx_duration_seconds{namespace="cyberlab-mirror"}) > 300
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Long-running transaction in cyberlab-mirror's PostgreSQL"
+            description: "A transaction on {{ $labels.pod }} has been open for {{ $value | humanizeDuration }}."
+        # local-path doesn't report volume usage, so this compares the database's own
+        # size with the volume's requested size (database.yaml). WAL isn't counted.
+        - alert: PostgresDatabaseNearlyFull
+          expr: |
+            sum(cnpg_pg_database_size_bytes{namespace="cyberlab-mirror"})
+              /
+            max(kube_persistentvolumeclaim_resource_requests_storage_bytes{namespace="cyberlab-mirror", persistentvolumeclaim="cyberlab-mirror-db-1"})
+              > 0.8
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "cyberlab-mirror's database is over 80% of its volume size"
+            description: "The databases use {{ $value | humanizePercentage }} of the 5Gi set in k8s/cyberlab-mirror/database.yaml."

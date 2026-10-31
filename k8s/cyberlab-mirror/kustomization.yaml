@@ -1,0 +1,9 @@
+# The GitHub mirror, synced by the cyberlab-mirror Application. So far only its
+# database; the API and web front end come next.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: cyberlab-mirror
+resources:
+  - database.yaml
+  - database-networkpolicy.yaml
+  - database-monitoring.yaml

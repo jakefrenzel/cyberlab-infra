@@ -19,3 +19,19 @@ configMapGenerator:
       # A fixed name, so Grafana's home-dashboard path in kube-prometheus-stack.yaml
       # and the sidecar's file stay stable across edits
       disableNameSuffixHash: true
+  # CloudNativePG's dashboard, from github.com/cloudnative-pg/grafana-dashboards tag
+  # cluster-v0.0.5 (commit cececeb, charts/cluster/grafana-dashboard.json). One edit:
+  # the expression panel's datasource "${DS_EXPRESSION}" -> "__expr__", because that
+  # placeholder is only filled in by Grafana's manual import, not by the sidecar.
+  - name: cloudnative-pg-dashboard
+    namespace: monitoring
+    files:
+      - dashboards/cloudnative-pg.json
+    options:
+      labels:
+        grafana_dashboard: "1"
+      annotations:
+        # 246 KB: client-side apply would copy it into a last-applied annotation,
+        # close to the 256 KB annotation limit
+        argocd.argoproj.io/sync-options: ServerSideApply=true
+      disableNameSuffixHash: true

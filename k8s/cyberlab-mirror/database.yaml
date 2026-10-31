@@ -1,0 +1,44 @@
+# PostgreSQL for cyberlab-mirror, run by the CloudNativePG operator (k8s/apps/cloudnative-pg.yaml).
+# It holds what github.com/atlasopsec/auth needs (users, sessions, rate limits, the
+# security event log, all in its own `auth` schema). The mirrored repositories
+# themselves live on the API's own volume, not here.
+#
+# The operator creates the Secret cyberlab-mirror-db-app (keys: uri, host, port,
+# dbname, user, password); the API reads its connection string from `uri`. There is
+# no superuser Secret: enableSuperuserAccess stays off (the default).
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: cyberlab-mirror-db
+spec:
+  # One instance: a lab with three nodes and local disks. A second instance would add
+  # streaming replication and failover, but local-path volumes already pin the
+  # database to one node.
+  instances: 1
+  # "minimal" = PostgreSQL only, no extensions or backup tools (CloudNativePG's
+  # default "system" image carries the old in-tree Barman tools). The dated tag is
+  # the weekly rebuild this digest came from; the digest is what runs. Signed with
+  # cosign by CloudNativePG's release workflow.
+  imageName: ghcr.io/cloudnative-pg/postgresql:18.6-202610260820-minimal-trixie@sha256:64abc98a4387361afd6821a3a99f975763bbd87bbdde9449e75ad6002528a318
+  # The default PodDisruptionBudget protects the primary from eviction. With a single
+  # instance that means no node drain can ever finish (Talos upgrades drain nodes),
+  # so it's off. A drain now stops the database until that node is back (local-path
+  # pins it there), which is fine for a lab.
+  enablePDB: false
+  bootstrap:
+    initdb:
+      database: mirror
+      owner: mirror
+  storage:
+    storageClass: local-path
+    # local-path doesn't enforce sizes; the real limit is the worker's 20 GB data disk.
+    # PostgresDatabaseNearlyFull (database-monitoring.yaml) warns against this number.
+    size: 5Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+  # No backups yet. Losing this database loses accounts and sessions only (the
+  # mirror re-clones from GitHub). Barman Cloud backups to S3 come with remote state.

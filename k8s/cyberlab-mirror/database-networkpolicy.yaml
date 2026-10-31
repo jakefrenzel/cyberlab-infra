@@ -1,0 +1,101 @@
+# Default deny for the whole namespace, then exactly what the database needs. The
+# API and web front end bring their own allow rules when they arrive (the API's
+# access to port 5432 goes in the database's ingress rules below).
+# kubectl port-forward still works: it connects from inside the pod's own network namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+# Every pod CloudNativePG runs for this cluster: the database instance and its
+# one-off jobs (initdb at creation).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cyberlab-mirror-db
+spec:
+  podSelector:
+    matchLabels:
+      cnpg.io/cluster: cyberlab-mirror-db
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # The operator checking each instance's status (the instance manager's HTTP port)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: cnpg-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cloudnative-pg
+      ports:
+        - port: 8000
+          protocol: TCP
+    # Prometheus scraping the metrics exporter
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - port: 9187
+          protocol: TCP
+    # Other instances of the same cluster (replication and status), if instances > 1
+    - from:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: cyberlab-mirror-db
+      ports:
+        - port: 5432
+          protocol: TCP
+        - port: 8000
+          protocol: TCP
+  egress:
+    # Resolving the cluster's own Services
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Other instances of the same cluster, if instances > 1
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: cyberlab-mirror-db
+      ports:
+        - port: 5432
+          protocol: TCP
+        - port: 8000
+          protocol: TCP
+---
+# The instance manager in each database pod watches its Cluster resource and reports
+# status through the Kubernetes API. A plain NetworkPolicy can't select the API
+# server under Cilium (it's a host-network static pod, not a pod IP), so this one
+# rule is a CiliumNetworkPolicy. Port 6443: Cilium's kube-proxy replacement has
+# already translated kubernetes.default:443 to the API server's own port.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: cyberlab-mirror-db-apiserver
+spec:
+  endpointSelector:
+    matchLabels:
+      cnpg.io/cluster: cyberlab-mirror-db
+  egress:
+    - toEntities:
+        - kube-apiserver
+      toPorts:
+        - ports:
+            - port: "6443"
+              protocol: TCP

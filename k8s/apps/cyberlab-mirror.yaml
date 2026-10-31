@@ -1,0 +1,39 @@
+# The lab's GitHub mirror, built and signed in github.com/jakefrenzel/cyberlab-mirror.
+# For now this is only its PostgreSQL database (k8s/cyberlab-mirror/database*.yaml);
+# the API and web front end join it later.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: cyberlab-mirror
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/jakefrenzel/cyberlab-infra.git
+    targetRevision: main
+    path: k8s/cyberlab-mirror
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: cyberlab-mirror
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+    # CloudNativePG's database pods pass "restricted", and the app will be written to
+    managedNamespaceMetadata:
+      labels:
+        pod-security.kubernetes.io/enforce: restricted
+        pod-security.kubernetes.io/warn: restricted
+        pod-security.kubernetes.io/audit: restricted
+    # On a fresh cluster the Cluster CRD arrives with the cloudnative-pg app, and the
+    # PodMonitor/PrometheusRule CRDs with kube-prometheus-stack; retry until they exist
+    retry:
+      limit: 10
+      backoff:
+        duration: 30s
+        factor: 2
+        maxDuration: 5m
