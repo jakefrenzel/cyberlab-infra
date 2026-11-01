@@ -13,10 +13,12 @@ kind: ImageValidatingPolicy
 metadata:
   name: cyberlab-mirror-signed-images
 spec:
-  # Audit first: verdicts are recorded (PolicyReports, and warnings to whoever creates
-  # the pod) without blocking anything, so a mistake can't take the database down.
-  # Switched to Deny once the database, API, and web pods have all been seen to pass.
-  validationActions: [Audit]
+  # Enforced. Audit mode first proved it against unschedulable test pods: the
+  # database's exact images (CloudNativePG's Postgres, and its operator as an init
+  # container), the API, and the web front end passed; busybox, an unsigned init
+  # container next to a signed image, and cyberlab-status's image (validly signed,
+  # by the wrong workflow for this namespace) failed.
+  validationActions: [Deny]
   # Only this namespace's pods go through Kyverno; within it, fail closed
   failurePolicy: Fail
   webhookConfiguration:

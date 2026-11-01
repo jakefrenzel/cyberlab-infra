@@ -28,8 +28,8 @@ On top of the nodes:
 | Monitoring | kube-prometheus-stack (Prometheus, Grafana, Alertmanager), plus Cilium, Hubble, and control-plane (etcd, scheduler, controller-manager) metrics and dashboards; Argo CD metrics; a custom Cyberlab Overview home dashboard; extra alert rules for Argo CD and Cilium; warning and critical alerts to Discord | Argo CD, from this repo |
 | Host firewall | Cilium host policies: every node drops ingress that isn't explicitly allowed; control-plane metrics are reachable by Prometheus only | Feature by Terraform; policies by Argo CD |
 | Runtime security | [Falco](https://falco.org) 0.45 watching every node's syscalls with the modern eBPF driver; Falcosidekick forwards events to Alertmanager and a web UI, with metrics and dashboards in Prometheus/Grafana | Argo CD, from this repo |
-| App | [cyberlab-status](https://github.com/jakefrenzel/cyberlab-status), the lab's own Go status page: a signed image from GHCR, pinned by digest, under Pod Security "restricted" and a default-deny NetworkPolicy | Argo CD, from this repo |
-| Supply chain | [Kyverno](https://kyverno.io) 1.19: pods in `cyberlab-status` only start if their images are signed by its release workflow and carry a signed SBOM | Argo CD, from this repo |
+| Apps | [cyberlab-status](https://github.com/jakefrenzel/cyberlab-status), the lab's own Go status page; [cyberlab-mirror](https://github.com/jakefrenzel/cyberlab-mirror), a private mirror of my GitHub repositories (Go API and Next.js front end). Signed images from GHCR, pinned by digest, under Pod Security "restricted" and default-deny NetworkPolicies | Argo CD, from this repo |
+| Supply chain | [Kyverno](https://kyverno.io) 1.19: pods in `cyberlab-status` and `cyberlab-mirror` only start if every image is signed by the workflow that publishes it (and the apps' own carry a signed SBOM) | Argo CD, from this repo |
 | Database | [CloudNativePG](https://cloudnative-pg.io) 1.30 operator; PostgreSQL 18 for cyberlab-mirror (one instance, digest-pinned, default-deny NetworkPolicy, metrics, alerts, and dashboard) | Argo CD, from this repo |
 | Storage | [Local Path Provisioner](https://github.com/rancher/local-path-provisioner) as the default StorageClass, backed by each worker's data disk (a Talos user volume) | Talos volume from Terraform; provisioner by Argo CD |
 
@@ -55,7 +55,8 @@ Terraform owns the cluster and the two components it can't run without (CNI and 
 | `k8s/storage/local-path/` | Local Path Provisioner, pointed at the Talos user volume |
 | `k8s/security/` | Cilium host firewall policies and Kyverno's image signature policy |
 | `k8s/cyberlab-status/` | The status page: Deployment, NetworkPolicy, monitoring, and the image digest to run |
-| `k8s/cyberlab-mirror/` | The GitHub mirror (in progress): so far its PostgreSQL cluster, NetworkPolicies, and monitoring |
+| `k8s/cyberlab-mirror/` | The GitHub mirror: PostgreSQL cluster, API and web Deployments, NetworkPolicies, monitoring, and the image digests to run |
+| `scripts/cyberlab-mirror-secrets.ps1` | Creates cyberlab-mirror's two hand-made Secrets, without values ever reaching a command line |
 
 Adding a worker is one line in the `nodes` map in `nodes.tf`. Adding an app is one file in `k8s/apps/` and a push to `main`.
 
@@ -212,6 +213,38 @@ kubectl -n cyberlab-mirror exec -it cyberlab-mirror-db-1 -c postgres -- psql mir
 The `cyberlab-mirror` namespace enforces Pod Security `restricted` and denies all traffic by default ([`database-networkpolicy.yaml`](k8s/cyberlab-mirror/database-networkpolicy.yaml)). The database accepts only the operator (`:8000`), Prometheus (`:9187`), and its own instances, and reaches only DNS and the Kubernetes API (a `CiliumNetworkPolicy`, since a plain NetworkPolicy can't select the API server under Cilium). Tested: a pod in `default` times out on `:5432`, and a pod in `cyberlab-mirror` that isn't part of the database can't even resolve DNS.
 
 Alerts ([`database-monitoring.yaml`](k8s/cyberlab-mirror/database-monitoring.yaml)): `PostgresDown` (critical), `PostgresMetricsMissing`, `PostgresConnectionsNearLimit`, `PostgresLongTransaction`, and `PostgresDatabaseNearlyFull`. Grafana has CloudNativePG's own dashboard.
+
+### GitHub mirror (cyberlab-mirror)
+
+[cyberlab-mirror](https://github.com/jakefrenzel/cyberlab-mirror) keeps a bare copy of every repository I own and serves them read-only, behind the sign-in from [`atlasopsec/auth`](https://github.com/atlasopsec/auth). It's built, scanned, and signed in its own repository. A release opens a PR here that changes both images' tags and digests in [`k8s/cyberlab-mirror/kustomization.yaml`](k8s/cyberlab-mirror/kustomization.yaml). To open it:
+
+```bash
+kubectl -n cyberlab-mirror port-forward svc/cyberlab-mirror-web 3000:3000   # then http://localhost:3000
+```
+
+Port 3000 matters: links in the sign-up and password emails point at `http://localhost:3000`.
+
+- **API** ([`api.yaml`](k8s/cyberlab-mirror/api.yaml)): one replica on a 5 Gi mirror volume (`Recreate`, a single writer). It has no Kubernetes API token and a read-only root filesystem. It connects to PostgreSQL with `sslmode=verify-full` against the cluster's CA; only the CA's certificate is mounted, since its Secret also holds the CA's private key. `/metrics` and `/healthz` are on a separate port that only Prometheus and the kubelet use.
+- **Web** ([`web.yaml`](k8s/cyberlab-mirror/web.yaml)): needs no secrets and forwards no client IP (`CLIENT_IP_HEADER=none`), since nothing in front of port-forward could vouch for one.
+- **Network** ([`app-networkpolicy.yaml`](k8s/cyberlab-mirror/app-networkpolicy.yaml)):
+  - the web app reaches only DNS and the API
+  - the API accepts only the web app (port 8080) and Prometheus (9090), and reaches only the database
+  - the API leaves the cluster only for `api.github.com`, `github.com`, `api.resend.com`, and `api.pwnedpasswords.com`, over HTTPS, by name: a `CiliumNetworkPolicy` with `toFQDNs`, enforced through Cilium's DNS proxy
+  - tested from inside the web pod: GitHub, the internet, the database, and Prometheus all time out
+- **Images** ([`k8s/security/cyberlab-mirror-images.yaml`](k8s/security/cyberlab-mirror-images.yaml)): every image in the namespace, init and ephemeral containers included, must be signed by the workflow that publishes it:
+  - cyberlab-mirror's own release workflow, from a version tag, with its SBOM
+  - CloudNativePG's image build, for PostgreSQL
+  - CloudNativePG's release workflow, for the operator image, which runs as each database pod's init container
+
+  The identities were read from the images' signing certificates. Audit mode came first, tested with pods that could never be scheduled: the database's exact images passed, while busybox, an unsigned init container, and cyberlab-status's (wrongly signed, for here) image failed.
+- **Alerts** ([`app-monitoring.yaml`](k8s/cyberlab-mirror/app-monitoring.yaml)): `CyberlabMirrorDown`, `CyberlabMirrorSyncStale` (no complete sync in 13 hours, usually an expired GitHub token), and `CyberlabMirrorRepositoriesFailing`.
+
+Two Secrets are made by hand, with [`scripts/cyberlab-mirror-secrets.ps1`](scripts/cyberlab-mirror-secrets.ps1). Recreate them after a rebuild; until both exist, the API pod waits in `CreateContainerConfigError`:
+
+| Secret | Keys | |
+|---|---|---|
+| `cyberlab-mirror-auth-key` | `AUTH_ENCRYPTION_KEY` | Generated by the script and backed up age-encrypted next to the cyberlab backups. It encrypts users' 2FA secrets: losing it means setting 2FA up again |
+| `cyberlab-mirror-api` | `GITHUB_TOKEN`, `RESEND_API_KEY`, `MAIL_FROM`, `ALLOWED_EMAILS` | The GitHub token is fine-grained and read-only (*Contents* and *Metadata*). `ALLOWED_EMAILS` lives here only to keep it out of this public repository |
 
 ## CI
 
