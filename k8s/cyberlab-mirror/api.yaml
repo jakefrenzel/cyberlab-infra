@@ -106,11 +106,15 @@ spec:
               value: 10.244.0.0/16
             - name: DATA_DIR
               value: /data/repos
-            # Go's garbage collector aims to stay under the container's memory limit
+            # Two syncs at a time (each holds a whole object in memory while it
+            # indexes a fetch; see resources below)
+            - name: SYNC_CONCURRENCY
+              value: "2"
+            # Where Go's garbage collector starts working hard: below the container
+            # limit, so collecting has room before the kernel's OOM killer acts. (Set
+            # equal to the limit, the collector had no headroom.)
             - name: GOMEMLIMIT
-              valueFrom:
-                resourceFieldRef:
-                  resource: limits.memory
+              value: 800MiB
           volumeMounts:
             - name: repos
               mountPath: /data
@@ -124,12 +128,16 @@ spec:
             readOnlyRootFilesystem: true
             capabilities:
               drop: [ALL]
+          # Measured: idle ~30 MiB; syncing the largest repository (a 12.5 MB pack
+          # whose history holds 25 MB files) peaks at ~400 MiB, because go-git
+          # inflates each whole object while indexing a fetch. 256 MiB got the first
+          # sync OOM-killed six seconds in, on every restart.
           resources:
             requests:
               cpu: 50m
-              memory: 64Mi
+              memory: 128Mi
             limits:
-              memory: 256Mi
+              memory: 1Gi
           # Migrations run before the server listens
           startupProbe:
             httpGet:
