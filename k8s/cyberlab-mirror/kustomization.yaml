@@ -14,5 +14,5 @@ resources:
 # resource uses the image, so the entry changes nothing.
 images:
   - name: ghcr.io/jakefrenzel/cyberlab-mirror-api
-    newTag: "0.0.0"
-    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+    newTag: "0.1.0"
+    digest: sha256:ae712953b6dfd38660aae8955b1c79b4196b18ccf5798ceb38c3985b3ee00070
