@@ -17,8 +17,8 @@ resources:
 # own entry only); merging it deploys.
 images:
   - name: ghcr.io/jakefrenzel/cyberlab-mirror-api
-    newTag: "0.2.1"
-    digest: sha256:eaa93dbfd91b9912569859d73896225c58a03ffe52fffbfd2b63b1213a18d45e
+    newTag: "0.3.0"
+    digest: sha256:0b90b817404c8f10e34f32952df00141938d4cece4d63f53fbe1d60f84777241
   - name: ghcr.io/jakefrenzel/cyberlab-mirror-web
-    newTag: "0.2.1"
-    digest: sha256:37bf8b0802021fe8a7dea85187fb9d3cad6c9596f2559f6c13d78324a4b57971
+    newTag: "0.3.0"
+    digest: sha256:ad04df094630aa1e14f0391150ac66f591fb7fe134a0a61c1143b4119153f7b6
