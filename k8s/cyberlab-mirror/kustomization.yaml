@@ -10,9 +10,12 @@ resources:
 # Deploying a release = changing these lines. The digest is what actually runs, so a
 # re-pushed tag can't change it; the tag is for humans. The release workflow in
 # github.com/jakefrenzel/cyberlab-mirror opens a PR that changes them (each image's
-# own entry only); merging it deploys. Until the API's Deployment is added here, no
-# resource uses the image, so the entry changes nothing.
+# own entry only); merging it deploys. Until the Deployments are added here, no
+# resource uses the images, so the entries change nothing.
 images:
   - name: ghcr.io/jakefrenzel/cyberlab-mirror-api
     newTag: "0.1.0"
     digest: sha256:ae712953b6dfd38660aae8955b1c79b4196b18ccf5798ceb38c3985b3ee00070
+  - name: ghcr.io/jakefrenzel/cyberlab-mirror-web
+    newTag: "0.0.0"
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
