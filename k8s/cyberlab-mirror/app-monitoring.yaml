@@ -1,0 +1,51 @@
+# Metrics and alerts for the mirror itself (the database's are in
+# database-monitoring.yaml). The API serves /metrics on its ops port, which only
+# Prometheus can reach.
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: cyberlab-mirror-api
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cyberlab-mirror-api
+  podMetricsEndpoints:
+    - port: ops
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: cyberlab-mirror
+spec:
+  groups:
+    - name: cyberlab-mirror
+      rules:
+        - alert: CyberlabMirrorDown
+          expr: absent(up{namespace="cyberlab-mirror", job="cyberlab-mirror/cyberlab-mirror-api"} == 1)
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "cyberlab-mirror's API is down"
+            description: "Prometheus hasn't scraped the API for 15 minutes: no syncs, and the web app can't sign anyone in. A missing Secret (cyberlab-mirror-api or cyberlab-mirror-auth-key) keeps the pod in CreateContainerConfigError; see scripts/cyberlab-mirror-secrets.ps1."
+        # Syncs run every 6 hours; two missed in a row is a problem. Listing failures
+        # (most often an expired or revoked GitHub token) don't count as a finished
+        # run, so they end up here too.
+        - alert: CyberlabMirrorSyncStale
+          expr: time() - cyberlab_mirror_last_sync_run_timestamp_seconds{namespace="cyberlab-mirror"} > 13 * 3600
+          for: 30m
+          labels:
+            severity: warning
+          annotations:
+            summary: "cyberlab-mirror hasn't finished a sync in over 13 hours"
+            description: "The last complete sync run was {{ $value | humanizeDuration }} ago. If the API logs \"listing repositories: 401\", the GitHub token has expired or been revoked: create a new one and run scripts/cyberlab-mirror-secrets.ps1 -ApiSecrets -Replace."
+        # A repository that fails one sync and recovers on the next is noise; one that
+        # stays failed across runs means its copy is falling behind
+        - alert: CyberlabMirrorRepositoriesFailing
+          expr: cyberlab_mirror_repositories{namespace="cyberlab-mirror", state="failed"} > 0
+          for: 7h
+          labels:
+            severity: warning
+          annotations:
+            summary: "{{ $value }} mirrored repositories keep failing to sync"
+            description: "Failed for more than one sync interval. The Repositories page in the web app shows each one's last error."

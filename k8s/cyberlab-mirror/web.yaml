@@ -1,0 +1,102 @@
+# cyberlab-mirror's web front end (github.com/jakefrenzel/cyberlab-mirror, web/): the
+# Next.js app the browser talks to. It holds the session cookie and calls the API with
+# it. No secrets. The image's tag and digest are set in kustomization.yaml.
+#
+#   kubectl -n cyberlab-mirror port-forward svc/cyberlab-mirror-web 3000:3000
+#   # then http://localhost:3000
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cyberlab-mirror-web
+  labels:
+    app.kubernetes.io/name: cyberlab-mirror-web
+    app.kubernetes.io/part-of: cyberlab-mirror
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cyberlab-mirror-web
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cyberlab-mirror-web
+        app.kubernetes.io/part-of: cyberlab-mirror
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: web
+          image: ghcr.io/jakefrenzel/cyberlab-mirror-web
+          ports:
+            - name: http
+              containerPort: 3000
+          env:
+            - name: API_URL
+              value: http://cyberlab-mirror-api:8080
+            # No edge in front (kubectl port-forward), so no client IP is forwarded:
+            # any value in the header would be the browser's own claim
+            - name: CLIENT_IP_HEADER
+              value: none
+            - name: OAUTH_PROVIDERS
+              value: ""
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            # Next.js's own cache, the only place it writes
+            - name: next-cache
+              mountPath: /app/.next/cache
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 384Mi
+          # /login renders without calling the API, so this checks the web app alone
+          startupProbe:
+            httpGet:
+              path: /login
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /login
+              port: http
+            periodSeconds: 30
+          readinessProbe:
+            httpGet:
+              path: /login
+              port: http
+            periodSeconds: 10
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+        - name: next-cache
+          emptyDir:
+            sizeLimit: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cyberlab-mirror-web
+  labels:
+    app.kubernetes.io/name: cyberlab-mirror-web
+spec:
+  selector:
+    app.kubernetes.io/name: cyberlab-mirror-web
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

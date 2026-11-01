@@ -1,0 +1,115 @@
+# What the web front end and the API may talk to, on top of the namespace's default
+# deny (database-networkpolicy.yaml). kubectl port-forward and the kubelet's probes
+# aren't affected: they don't arrive over the pod network.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cyberlab-mirror-web
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: cyberlab-mirror-web
+  policyTypes: [Ingress, Egress]
+  # Nothing reaches the web app over the network: it's opened with port-forward
+  ingress: []
+  egress:
+    # Resolving cyberlab-mirror-api
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # The API, and nothing else
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cyberlab-mirror-api
+      ports:
+        - port: 8080
+          protocol: TCP
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cyberlab-mirror-api
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: cyberlab-mirror-api
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # The web front end, on the API port only
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cyberlab-mirror-web
+      ports:
+        - port: 8080
+          protocol: TCP
+    # Prometheus, on the ops port only (metrics)
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: monitoring
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: prometheus
+      ports:
+        - port: 9090
+          protocol: TCP
+  egress:
+    # The database. DNS and the internet are in the CiliumNetworkPolicy below.
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/cluster: cyberlab-mirror-db
+      ports:
+        - port: 5432
+          protocol: TCP
+---
+# The API's only ways out of the cluster: four HTTPS hosts by name. Cilium answers its
+# DNS queries through its DNS proxy, learns the addresses those names resolve to, and
+# allows exactly those, so an address that isn't one of them (or plain HTTP) is
+# dropped. A plain NetworkPolicy can only allow IP ranges, which for GitHub would
+# mean all of its cloud.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: cyberlab-mirror-api-egress
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: cyberlab-mirror-api
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s:k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - port: "53"
+              protocol: ANY
+          rules:
+            dns:
+              # Every name may be looked up; only the ones below may then be reached
+              - matchPattern: "*"
+    - toFQDNs:
+        # Listing the repositories
+        - matchName: api.github.com
+        # Fetching them (git over HTTPS)
+        - matchName: github.com
+        # Sign-up, verification, and security emails
+        - matchName: api.resend.com
+        # Have I Been Pwned's password range API, at sign-up and password changes
+        - matchName: api.pwnedpasswords.com
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

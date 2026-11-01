@@ -1,0 +1,178 @@
+# cyberlab-mirror's Go API (github.com/jakefrenzel/cyberlab-mirror, api/): mirrors GitHub
+# to its volume and serves it read-only to the web front end, behind the
+# atlasopsec/auth sign-in. The image's tag and digest are set in kustomization.yaml.
+#
+# Two hand-made Secrets (scripts/cyberlab-mirror-secrets.ps1; recreate after a rebuild):
+#   cyberlab-mirror-auth-key  AUTH_ENCRYPTION_KEY (encrypts 2FA secrets; backed up)
+#   cyberlab-mirror-api       GITHUB_TOKEN, RESEND_API_KEY, MAIL_FROM, ALLOWED_EMAILS
+# Until both exist the pod waits (CreateContainerConfigError), by design.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cyberlab-mirror-repos
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: local-path
+  resources:
+    requests:
+      # All 44 repositories are ~46 MB; local-path doesn't enforce this anyway
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cyberlab-mirror-api
+  labels:
+    app.kubernetes.io/name: cyberlab-mirror-api
+    app.kubernetes.io/part-of: cyberlab-mirror
+spec:
+  replicas: 1
+  # The volume is ReadWriteOnce and the mirror expects a single writer: the old pod
+  # stops before the new one starts
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cyberlab-mirror-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cyberlab-mirror-api
+        app.kubernetes.io/part-of: cyberlab-mirror
+    spec:
+      # It never calls the Kubernetes API, so it gets no token for it
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        # The volume is made writable for that group
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: api
+          image: ghcr.io/jakefrenzel/cyberlab-mirror-api
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: ops
+              containerPort: 9090
+          env:
+            # CloudNativePG's connection string, then TLS checked against the cluster's
+            # own CA (only its certificate is mounted, never its key)
+            - name: DB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: cyberlab-mirror-db-app
+                  key: fqdn-uri
+            - name: DATABASE_URL
+              value: "$(DB_URI)?sslmode=verify-full&sslrootcert=/etc/cyberlab-mirror/db-ca/ca.crt"
+            - name: AUTH_ENCRYPTION_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: cyberlab-mirror-auth-key
+                  key: AUTH_ENCRYPTION_KEY
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: cyberlab-mirror-api
+                  key: GITHUB_TOKEN
+            - name: RESEND_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: cyberlab-mirror-api
+                  key: RESEND_API_KEY
+            - name: MAIL_FROM
+              valueFrom:
+                secretKeyRef:
+                  name: cyberlab-mirror-api
+                  key: MAIL_FROM
+            # In the Secret only to keep the addresses out of this public repository
+            - name: ALLOWED_EMAILS
+              valueFrom:
+                secretKeyRef:
+                  name: cyberlab-mirror-api
+                  key: ALLOWED_EMAILS
+            # Reached through kubectl port-forward; links in emails point here
+            - name: APP_URL
+              value: http://localhost:3000
+            # The cluster's pod network. Only the web pods can reach the API at all
+            # (api-networkpolicy.yaml), so in practice this trusts them alone. The web
+            # app forwards the browser's user agent, and no IP (CLIENT_IP_HEADER=none).
+            - name: TRUSTED_PROXIES
+              value: 10.244.0.0/16
+            - name: DATA_DIR
+              value: /data/repos
+            # Go's garbage collector aims to stay under the container's memory limit
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  resource: limits.memory
+          volumeMounts:
+            - name: repos
+              mountPath: /data
+            - name: db-ca
+              mountPath: /etc/cyberlab-mirror/db-ca
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              memory: 256Mi
+          # Migrations run before the server listens
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: ops
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: ops
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: ops
+            periodSeconds: 10
+      volumes:
+        - name: repos
+          persistentVolumeClaim:
+            claimName: cyberlab-mirror-repos
+        - name: db-ca
+          secret:
+            secretName: cyberlab-mirror-db-ca
+            # The CA's certificate only: the Secret also holds its private key
+            items:
+              - key: ca.crt
+                path: ca.crt
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cyberlab-mirror-api
+  labels:
+    app.kubernetes.io/name: cyberlab-mirror-api
+spec:
+  selector:
+    app.kubernetes.io/name: cyberlab-mirror-api
+  # The API port only; /metrics and /healthz on "ops" are reached pod-to-pod
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

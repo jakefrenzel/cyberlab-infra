@@ -1,6 +1,5 @@
 # Default deny for the whole namespace, then exactly what the database needs. The
-# API and web front end bring their own allow rules when they arrive (the API's
-# access to port 5432 goes in the database's ingress rules below).
+# API and web front end have their own rules in app-networkpolicy.yaml.
 # kubectl port-forward still works: it connects from inside the pod's own network namespace.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -22,6 +21,14 @@ spec:
       cnpg.io/cluster: cyberlab-mirror-db
   policyTypes: [Ingress, Egress]
   ingress:
+    # The API: PostgreSQL itself
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: cyberlab-mirror-api
+      ports:
+        - port: 5432
+          protocol: TCP
     # The operator checking each instance's status (the instance manager's HTTP port)
     - from:
         - namespaceSelector:

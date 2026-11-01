@@ -1,5 +1,5 @@
-# The GitHub mirror, synced by the cyberlab-mirror Application. So far only its
-# database; the API and web front end come next.
+# The GitHub mirror, synced by the cyberlab-mirror Application: its database, the Go
+# API, and the web front end.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: cyberlab-mirror
@@ -7,11 +7,14 @@ resources:
   - database.yaml
   - database-networkpolicy.yaml
   - database-monitoring.yaml
+  - api.yaml
+  - web.yaml
+  - app-networkpolicy.yaml
+  - app-monitoring.yaml
 # Deploying a release = changing these lines. The digest is what actually runs, so a
 # re-pushed tag can't change it; the tag is for humans. The release workflow in
 # github.com/jakefrenzel/cyberlab-mirror opens a PR that changes them (each image's
-# own entry only); merging it deploys. Until the Deployments are added here, no
-# resource uses the images, so the entries change nothing.
+# own entry only); merging it deploys.
 images:
   - name: ghcr.io/jakefrenzel/cyberlab-mirror-api
     newTag: "0.2.0"

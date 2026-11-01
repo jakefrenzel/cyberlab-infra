@@ -1,0 +1,106 @@
+# Supply-chain gate for the cyberlab-mirror namespace: every image a pod runs there must
+# be signed (cosign keyless, recorded in Sigstore's public transparency log) by the
+# workflow that publishes it, and anything from anywhere else is rejected:
+#   ghcr.io/jakefrenzel/cyberlab-mirror-*      cyberlab-mirror's release workflow, from a
+#                                              version tag, with its signed SBOM
+#   ghcr.io/cloudnative-pg/postgresql          CloudNativePG's image build (weekly, from main)
+#   ghcr.io/cloudnative-pg/cloudnative-pg      CloudNativePG's release workflow (the operator
+#                                              image, which runs as each database pod's
+#                                              init container)
+# The CloudNativePG identities come from their images' signing certificates.
+apiVersion: policies.kyverno.io/v1
+kind: ImageValidatingPolicy
+metadata:
+  name: cyberlab-mirror-signed-images
+spec:
+  # Audit first: verdicts are recorded (PolicyReports, and warnings to whoever creates
+  # the pod) without blocking anything, so a mistake can't take the database down.
+  # Switched to Deny once the database, API, and web pods have all been seen to pass.
+  validationActions: [Audit]
+  # Only this namespace's pods go through Kyverno; within it, fail closed
+  failurePolicy: Fail
+  webhookConfiguration:
+    timeoutSeconds: 15
+  # Admission only, as for cyberlab-status: a background scan would have to list
+  # pods/ephemeralcontainers, which can't be listed
+  evaluation:
+    background:
+      enabled: false
+  matchConstraints:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: cyberlab-mirror
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods, pods/ephemeralcontainers]
+  # Every image is considered, whatever its registry
+  matchImageReferences:
+    - glob: "*"
+  validationConfigurations:
+    mutateDigest: true
+    verifyDigest: true
+    # Every image must pass a signature check below; one no rule vouches for fails
+    required: true
+  # Every container of the pod, spelled out: regular, init (the database pods' operator
+  # image), and ephemeral (kubectl debug)
+  images:
+    - name: all
+      expression: >-
+        object.spec.containers.map(c, c.image)
+        + (has(object.spec.initContainers) ? object.spec.initContainers.map(c, c.image) : [])
+        + (has(object.spec.ephemeralContainers) ? object.spec.ephemeralContainers.map(c, c.image) : [])
+  attestors:
+    - name: mirror
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: '^https://github\.com/jakefrenzel/cyberlab-mirror/\.github/workflows/release\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$'
+        ctlog:
+          url: https://rekor.sigstore.dev
+    - name: cnpgPostgres
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: '^https://github\.com/cloudnative-pg/postgres-containers/\.github/workflows/bake_targets\.yml@refs/heads/main$'
+        ctlog:
+          url: https://rekor.sigstore.dev
+    - name: cnpgOperator
+      cosign:
+        keyless:
+          identities:
+            - issuer: https://token.actions.githubusercontent.com
+              subjectRegExp: '^https://github\.com/cloudnative-pg/cloudnative-pg/\.github/workflows/release-publish\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+$'
+        ctlog:
+          url: https://rekor.sigstore.dev
+  attestations:
+    - name: sbom
+      intoto:
+        type: https://spdx.dev/Document
+  validations:
+    # Each image is checked against the publisher its name claims; a name from any
+    # other registry or path fails outright
+    - expression: >-
+        images.all.map(image,
+          image.startsWith("ghcr.io/jakefrenzel/cyberlab-mirror-")
+            ? verifyImageSignatures(image, [attestors.mirror]) > 0
+          : image.startsWith("ghcr.io/cloudnative-pg/postgresql:") || image.startsWith("ghcr.io/cloudnative-pg/postgresql@")
+            ? verifyImageSignatures(image, [attestors.cnpgPostgres]) > 0
+          : image.startsWith("ghcr.io/cloudnative-pg/cloudnative-pg:") || image.startsWith("ghcr.io/cloudnative-pg/cloudnative-pg@")
+            ? verifyImageSignatures(image, [attestors.cnpgOperator]) > 0
+          : false
+        ).all(ok, ok)
+      message: >-
+        Images in cyberlab-mirror must be cyberlab-mirror's own (signed by its release
+        workflow) or CloudNativePG's (signed by its build workflows)
+    # Our own images also carry their signed SBOM
+    - expression: >-
+        images.all.filter(image, image.startsWith("ghcr.io/jakefrenzel/cyberlab-mirror-"))
+          .map(image, verifyAttestationSignatures(image, attestations.sbom, [attestors.mirror]) > 0)
+          .all(ok, ok)
+      message: >-
+        cyberlab-mirror's images must carry an SPDX SBOM attestation signed by its release
+        workflow
