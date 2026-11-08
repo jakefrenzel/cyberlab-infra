@@ -75,10 +75,9 @@ spec:
                 # Informational alerts are for dashboards, not notifications
                 - receiver: "null"
                   matchers: [severity = "info"]
-                # Falco events (forwarded by Falcosidekick) stay in Alertmanager and the
-                # Falcosidekick UI until the rules are tuned against a baseline
-                - receiver: "null"
-                  matchers: [source = "falco"]
+                # Falco events reach here from Falcosidekick at Warning and above
+                # (minimumpriority in falco.yaml) and go to Discord like everything else.
+                # Rules were tuned against the 2026-10-25 -> 11-08 baseline first.
             receivers:
               - name: "null"
               - name: discord

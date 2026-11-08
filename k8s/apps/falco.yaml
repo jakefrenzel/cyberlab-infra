@@ -75,6 +75,45 @@ spec:
         falco:
           json_output: true
 
+        # Tuning from the 2026-10-25 -> 11-08 baseline (59 events, 58 false positives).
+        # Mounted into /etc/falco/rules.d, loaded after the default ruleset. Each
+        # exception is pinned to the image + process that produced it.
+        customRules:
+          cyberlab-rules.yaml: |-
+            # CloudNativePG: Postgres runs archive_command through sh, and initdb probes
+            # locales. Upstream's postgres_running_cnpg macro expects
+            # "sh -c /controller/manager ..." but Postgres now passes "sh -c -- ...".
+            - macro: user_shell_container_exclusions
+              condition: >
+                (container.image.repository = "ghcr.io/cloudnative-pg/postgresql"
+                 and proc.pname = postgres
+                 and (proc.cmdline startswith "sh -c -- /controller/manager wal-archive "
+                      or proc.cmdline = "sh -c -- locale -a"))
+              override:
+                condition: replace
+
+            # Go daemons whose dup3() lands a socket on fd 0-2: cilium-agent health
+            # probes (:4240), the CNPG instance manager (:8000/:8010), Argo CD repo-server.
+            - macro: user_known_stand_streams_redirect_activities
+              condition: >
+                ((container.image.repository = "quay.io/cilium/cilium" and proc.name = cilium-agent)
+                 or (container.image.repository = "ghcr.io/cloudnative-pg/postgresql" and proc.name = manager)
+                 or (container.image.repository = "quay.io/argoproj/argocd" and proc.name = argocd-repo-ser))
+              override:
+                condition: replace
+
+            # containerd unpacking image layers that ship /var/log/*.log files.
+            # Upstream's containerd_activities needs proc.name=containerd, but on Talos
+            # the event arrives without process info, so match the host and
+            # containerd's own directories instead.
+            - macro: allowed_clear_log_files
+              condition: >
+                (container.id = host
+                 and (fd.name startswith "/var/lib/containerd/io.containerd.snapshotter.v1.overlayfs/snapshots/"
+                      or fd.name startswith "/var/lib/containerd/tmpmounts/"))
+              override:
+                condition: replace
+
         falcosidekick:
           enabled: true
           replicaCount: 1

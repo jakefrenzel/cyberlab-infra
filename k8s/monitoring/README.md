@@ -43,7 +43,6 @@ Alertmanager's routes are in [`../apps/kube-prometheus-stack.yaml`](../apps/kube
 |-------|-----|
 | `Watchdog` | Always firing by design: proves the pipeline works |
 | `InfoInhibitor`, `severity=info` | Informational, for dashboards |
-| `source=falco` | Falco events, until the rules are tuned against a baseline |
 
 ### Lab alert rules
 
