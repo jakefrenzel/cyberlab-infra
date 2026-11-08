@@ -76,8 +76,12 @@ spec:
                 - receiver: "null"
                   matchers: [severity = "info"]
                 # Falco events reach here from Falcosidekick at Warning and above
-                # (minimumpriority in falco.yaml) and go to Discord like everything else.
-                # Rules were tuned against the 2026-10-25 -> 11-08 baseline first.
+                # (minimumpriority in falco.yaml). Rules were tuned against the
+                # 2026-10-25 -> 11-08 baseline first. Each event carries ~25 labels, so
+                # they get their own message format, grouped per rule and pod.
+                - receiver: discord-falco
+                  matchers: [source = "falco"]
+                  group_by: [rule, hostname, k8s_ns_name, k8s_pod_name]
             receivers:
               - name: "null"
               - name: discord
@@ -85,6 +89,24 @@ spec:
                   # Mounted from the hand-made alertmanager-discord Secret (below)
                   - webhook_url_file: /etc/alertmanager/secrets/alertmanager-discord/webhook-url
                     send_resolved: true
+              - name: discord-falco
+                discord_configs:
+                  - webhook_url_file: /etc/alertmanager/secrets/alertmanager-discord/webhook-url
+                    # A Falco event is a moment, not a state: skip the "resolved" message
+                    # that would follow 5 minutes later
+                    send_resolved: false
+                    title: >-
+                      Falco {{ .CommonLabels.priority }}: {{ .CommonLabels.rule }}{{ if gt (len .Alerts) 1 }} (x{{ len .Alerts }}){{ end }}
+                    # <t:unix:f> renders in the reader's own timezone
+                    message: |-
+                      {{ range .Alerts -}}
+                      **Node:** {{ .Labels.hostname }}{{ if .Labels.k8s_pod_name }} · **Pod:** {{ .Labels.k8s_ns_name }}/{{ .Labels.k8s_pod_name }}{{ end }}
+                      {{ if .Labels.container_image_repository }}**Image:** {{ .Labels.container_image_repository }}:{{ .Labels.container_image_tag }}
+                      {{ end }}**Process:** `{{ .Labels.proc_cmdline }}` (parent {{ .Labels.proc_pname }}, user {{ .Labels.user_name }})
+                      {{ if .Labels.fd_name }}**Target:** `{{ .Labels.fd_name }}`
+                      {{ end }}**When:** <t:{{ .StartsAt.Unix }}:f>
+
+                      {{ end }}
             inhibit_rules:
               - source_matchers: [severity = critical]
                 target_matchers: [severity =~ warning|info]
