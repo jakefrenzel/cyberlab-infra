@@ -67,9 +67,14 @@ spec:
               group_interval: 5m
               repeat_interval: 12h
               routes:
-                # Always-firing heartbeat that proves the alert pipeline works
-                - receiver: "null"
+                # Always-firing heartbeat, sent to healthchecks.io every minute. If the
+                # pings stop (pve1, the cluster, Prometheus, or Alertmanager is down),
+                # healthchecks.io alerts from outside the lab: a dead-man's switch.
+                - receiver: healthchecks
                   matchers: [alertname = "Watchdog"]
+                  group_wait: 0s
+                  group_interval: 1m
+                  repeat_interval: 1m
                 - receiver: "null"
                   matchers: [alertname = "InfoInhibitor"]
                 # Informational alerts are for dashboards, not notifications
@@ -84,6 +89,12 @@ spec:
                   group_by: [rule, hostname, k8s_ns_name, k8s_pod_name]
             receivers:
               - name: "null"
+              - name: healthchecks
+                webhook_configs:
+                  # The ping URL is a credential (anyone with it can report "all fine"):
+                  # mounted from the hand-made alertmanager-healthchecks Secret
+                  - url_file: /etc/alertmanager/secrets/alertmanager-healthchecks/ping-url
+                    send_resolved: false
               - name: discord
                 discord_configs:
                   # Mounted from the hand-made alertmanager-discord Secret (below)
@@ -121,9 +132,10 @@ spec:
             templates:
               - /etc/alertmanager/config/*.tmpl
           alertmanagerSpec:
-            # The Discord webhook URL is a credential: created by hand, never committed
-            # (see k8s/monitoring/README.md). Mounted under /etc/alertmanager/secrets/.
-            secrets: [alertmanager-discord]
+            # The Discord webhook and healthchecks.io ping URLs are credentials: created
+            # by hand, never committed (see k8s/monitoring/README.md). Mounted under
+            # /etc/alertmanager/secrets/. The pod can't start until both exist.
+            secrets: [alertmanager-discord, alertmanager-healthchecks]
             storage:
               volumeClaimTemplate:
                 spec:

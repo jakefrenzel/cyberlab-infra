@@ -10,7 +10,7 @@ Kustomize ships each file as a ConfigMap labelled `grafana_dashboard: "1"`, and 
 
 ## Bootstrap secrets (once per cluster)
 
-Two Secrets are created by hand and never committed. After a rebuild, create them once the `monitoring` namespace exists.
+Three Secrets are created by hand and never committed. After a rebuild, create them once the `monitoring` namespace exists.
 
 **Grafana admin login.** Until it exists, the Grafana pod waits in `CreateContainerConfigError` and recovers on its own once the Secret is created:
 
@@ -35,13 +35,23 @@ kubectl -n monitoring create secret generic alertmanager-discord --from-literal=
 
 Alertmanager mounts it as a file, so without it the Alertmanager pod can't start. Create it before the first sync.
 
+**healthchecks.io ping URL (dead-man's switch).** Alertmanager sends the always-firing `Watchdog` alert to this URL every minute. If the pings stop, because `pve1`, the cluster, Prometheus, or Alertmanager is down, healthchecks.io alerts from outside the lab. In healthchecks.io: create a check with a **period of 1 minute and a grace time of 5 minutes**, give it the email and Discord integrations, and copy its ping URL. Anyone with the URL can report "all fine", so it's read without echoing it or putting it in shell history:
+
+```powershell
+$s = Read-Host 'healthchecks.io ping URL' -AsSecureString
+$u = [Runtime.InteropServices.Marshal]::PtrToStringBSTR([Runtime.InteropServices.Marshal]::SecureStringToBSTR($s))
+kubectl -n monitoring create secret generic alertmanager-healthchecks --from-literal=ping-url=$u
+Remove-Variable s, u
+```
+
+Like the Discord Secret, Alertmanager can't start without it. Create both before the first sync.
+
 ## Alert routing
 
-Alertmanager's routes are in [`../apps/kube-prometheus-stack.yaml`](../apps/kube-prometheus-stack.yaml). Warning and critical alerts go to Discord, grouped by namespace, with a reminder every 12 hours while they keep firing and a message when they resolve. These are muted (still visible in Alertmanager):
+Alertmanager's routes are in [`../apps/kube-prometheus-stack.yaml`](../apps/kube-prometheus-stack.yaml). Warning and critical alerts go to Discord, grouped by namespace, with a reminder every 12 hours while they keep firing and a message when they resolve. `Watchdog` fires all the time by design and goes to healthchecks.io every minute instead (see the bootstrap secrets above): if it stops arriving, healthchecks.io raises the alarm. These are muted (still visible in Alertmanager):
 
 | Alert | Why |
 |-------|-----|
-| `Watchdog` | Always firing by design: proves the pipeline works |
 | `InfoInhibitor`, `severity=info` | Informational, for dashboards |
 
 ### Lab alert rules
