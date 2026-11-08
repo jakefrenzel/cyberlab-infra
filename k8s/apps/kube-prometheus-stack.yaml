@@ -70,11 +70,15 @@ spec:
                 # Always-firing heartbeat, sent to healthchecks.io every minute. If the
                 # pings stop (pve1, the cluster, Prometheus, or Alertmanager is down),
                 # healthchecks.io alerts from outside the lab: a dead-man's switch.
+                # Alertmanager only considers a repeat at each group_interval tick, and a
+                # repeat_interval equal to the tick lands just short of it, so 1m/1m
+                # pinged every ~2 minutes. Ticking every 30s and repeating after 50s
+                # gives a steady ping every minute.
                 - receiver: healthchecks
                   matchers: [alertname = "Watchdog"]
                   group_wait: 0s
-                  group_interval: 1m
-                  repeat_interval: 1m
+                  group_interval: 30s
+                  repeat_interval: 50s
                 - receiver: "null"
                   matchers: [alertname = "InfoInhibitor"]
                 # Informational alerts are for dashboards, not notifications
